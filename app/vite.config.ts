@@ -64,10 +64,30 @@ function valosight(): Plugin {
   };
 }
 
-export default defineConfig({
-  plugins: [react(), tailwindcss(), valosight()],
-  server: { port: 5174 },
+/** The dev server serves the demo player at the same address the build does, so "Try the demo" works locally. */
+function demoInDev(): Plugin {
+  return {
+    name: "valosight-demo-dev",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use("/demo/Demo_Player-DEMO.zip", (_req, res) => {
+        res.setHeader("Content-Type", "application/zip");
+        res.end(readFileSync(fileURLToPath(new URL("../test/demo-export/Demo_Player-DEMO.zip", import.meta.url))));
+      });
+    },
+  };
+}
+
+/** The home page (home/): the app's "Home" button links there. Change it when valosight.in goes live. */
+const HOME_URL = "https://valosight.vercel.app";
+/** The home page's dev server (`cd home && npm run dev`). */
+const LOCAL_HOME_URL = "http://localhost:5175";
+
+export default defineConfig(({ command }) => ({
+  plugins: [react(), tailwindcss(), valosight(), demoInDev()],
+  // The home page's dev server links here (home/vite.config.ts), so keep the port fixed.
+  server: { port: 5174, strictPort: true },
   build: { chunkSizeWarningLimit: 1500 },
   worker: { format: "es" },
-  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
-});
+  define: { __APP_VERSION__: JSON.stringify(pkg.version), __HOME_URL__: JSON.stringify(command === "serve" ? LOCAL_HOME_URL : HOME_URL) },
+}));

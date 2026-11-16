@@ -1,9 +1,10 @@
 import { AnimatePresence, MotionConfig, motion, useScroll, useSpring } from "motion/react";
 import { APP_NAME, Logo, Wordmark } from "./components/Logo";
-import { CalendarRange, Check, ChevronDown, Database, FlaskConical, Gavel, LayoutDashboard, LifeBuoy, Settings, Users, Shield, Sparkles, Swords, Upload, Wallet } from "lucide-react";
+import { CalendarRange, Check, ChevronDown, Database, FlaskConical, Gavel, House, LayoutDashboard, LifeBuoy, Settings, Users, Shield, Sparkles, Swords, Upload, Wallet } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AccountProvider, useAccount, type Range } from "./lib/account";
 import { SettingsProvider, useSettings } from "./lib/settings";
+import { homeUrl } from "./lib/home";
 import { DS } from "./lib/valorant";
 import { EASE_EMPH } from "./lib/motion";
 import { Loading } from "./components/ui";
@@ -185,7 +186,7 @@ function ScopePill() {
         className={`flex h-8 items-center gap-2 rounded-full border px-3 text-[13px] ${val !== "all" ? "border-accent/50 bg-accent-soft" : "border-line bg-panel-2 hover:border-line-strong hover:bg-panel-3"}`}
       >
         <CalendarRange size={14} className={val !== "all" ? "text-accent" : "text-muted"} />
-        <span className="font-medium">{label}</span>
+        <span className="whitespace-nowrap font-medium">{label}</span>
         <ChevronDown size={14} className={`text-muted transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       <AnimatePresence>
@@ -308,23 +309,35 @@ function IconNav({ items, view, go, className }: { items: typeof NAV; view: View
 /** The app's only navigation: logo + account on the left, pages in the middle, data scope on the right. */
 function TopBar({ view, items, go, empty }: { view: ViewId; items: typeof NAV; go: (v: ViewId) => void; empty: boolean }) {
   const scrolled = useScrolled();
+  const { settings } = useSettings();
   return (
     <div
       className={`sticky top-0 z-30 bg-[color-mix(in_oklab,var(--bg)_72%,transparent)] backdrop-blur-xl backdrop-saturate-150 transition-shadow duration-300 ${scrolled ? "shadow-[0_10px_30px_-18px_rgb(0_0_0/0.6)]" : ""}`}
     >
-      <div className="mx-auto grid h-14 max-w-[1400px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-4 sm:px-8">
+      {/* Phones: logo + controls on one row, the page icons scroll on a second. From md: one row of three. */}
+      <div className="mx-auto grid max-w-[1400px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-4 py-2 sm:px-8 md:h-14 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:py-0">
         <div className="flex min-w-0 items-center gap-3">
-          <button onClick={() => go(empty ? "import" : "overview")} className="flex shrink-0 items-center gap-2 rounded-lg" aria-label={`${APP_NAME} home`}>
+          <button onClick={() => go(empty ? "import" : "overview")} className="flex shrink-0 items-center gap-2 rounded-lg" aria-label={`${APP_NAME}: ${empty ? "import data" : "overview"}`}>
             <Logo />
             <Wordmark by className="hidden text-[15px] xl:inline-flex" />
           </button>
         </div>
-        <div className="flex min-w-0 justify-center">
+        <div className="col-span-2 row-start-2 flex min-w-0 justify-start md:col-span-1 md:row-start-auto md:justify-center">
           <IconNav items={items} view={view} go={go} className="flex" />
         </div>
         <div className="flex min-w-0 items-center justify-end gap-2">
           {!empty && <Freshness />}
           {!empty && !NO_SCOPE.includes(view) && <ScopePill />}
+          {/* Back to the home page, styled like its "Open the app" button so the two products match. Carries the
+              app's theme. The avatar stays at the far right. */}
+          <a
+            href={homeUrl(settings)}
+            title={`${APP_NAME} home page`}
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[10px] bg-[linear-gradient(110deg,var(--accent),color-mix(in_oklab,var(--accent)_65%,var(--violet)))] px-2.5 text-[14px] font-semibold text-white shadow-[0_8px_24px_-10px_var(--accent)] transition-[transform,box-shadow] duration-200 hover:-translate-y-px hover:shadow-[0_12px_30px_-10px_var(--accent)] sm:px-3.5"
+          >
+            <House size={16} />
+            <span className="hidden sm:inline">Back to home</span>
+          </a>
           {!empty && <AccountSwitcher go={go} />}
         </div>
       </div>
@@ -436,10 +449,10 @@ function Shell() {
       <main className="min-w-0">
         <TopBar view={effective} items={noAccounts ? NAV.filter((n) => n.group === "App") : topItems} go={go} empty={noAccounts} />
         {isDemoAccount(current) && (
-          <div className="mx-auto max-w-[1400px] px-4 pt-4 sm:px-8">
+          <div data-demo-banner className="mx-auto max-w-[1400px] px-4 pt-4 sm:px-8">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-info/30 bg-info-soft px-4 py-2.5 text-[13px]">
               <FlaskConical size={16} className="shrink-0 text-info" />
-              <span className="min-w-0 flex-1">
+              <span className="min-w-0 flex-1 basis-[15rem]">
                 You're exploring <b>Demo Player#DEMO</b>, a made-up account. Nothing here is real data.
               </span>
               <button onClick={() => go("import")} className="rounded-md border border-line-strong px-2.5 py-1 font-medium hover:border-accent hover:text-accent">
