@@ -1,3 +1,4 @@
+import { useSkinCatalog } from "../lib/skins";
 import { useMemo, useState } from "react";
 import { useDateGuard, useMaskIp } from "../lib/privacy-dates";
 import { Sens, usePrivacy } from "../lib/privacy";
@@ -57,11 +58,13 @@ export function Money() {
   const main = cur[0]?.[0] ?? payAll.all[0]?.currency_code ?? "USD";
   const total = cur[0]?.[1] ?? 0;
   const vpBought = pay.data.reduce((a, p) => a + (Number(p.game_currency_granted) || 0), 0);
-  const vpItems = useMemo(() => classifyAllVP(store.data, storeAll.all), [store.data, storeAll.all]);
+  const cat = useSkinCatalog(); // its act calendar names battle passes
+  const vpItems = useMemo(() => classifyAllVP(store.data, storeAll.all), [store.data, storeAll.all, cat]);
   const vpSpent = vpItems.reduce((a, x) => a + x.cost, 0);
 
   // FIFO always runs over the full history so a filtered period still knows where earlier VP came from.
-  const fifo = useMemo(() => allocateVP(payAll.all, storeAll.all), [payAll.all, storeAll.all]);
+  // The catalogue (cat) changes how unlabelled passes are named, so it is a dependency here too.
+  const fifo = useMemo(() => allocateVP(payAll.all, storeAll.all), [payAll.all, storeAll.all, cat]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const monthly = useMemo(() => {
     const m = new Map<string, number>();

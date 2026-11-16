@@ -141,7 +141,7 @@ export function Conduct() {
             .map((t, i) => {
               const ls = (t.chat_lines ?? []).filter((l: any) => l.transcript);
               return (
-                <li key={t._id ?? i} className="px-5 py-3">
+                <li key={t._id ?? i} className="px-6 py-3">
                   <div className="flex items-baseline justify-between gap-3">
                     <span className="num text-[12.5px] font-medium">{t._t ? f.dateTime(t._t) : "Date not recorded"}</span>
                     <span className="num text-[12px] text-muted">{ls.length} lines</span>

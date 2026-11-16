@@ -392,7 +392,8 @@ function Shell() {
         setDemo({ busy: false });
         go((NAV.some((n) => n.id === target) ? target : "overview") as ViewId);
       })
-      .catch((e: Error) => {
+      .catch(async (e: Error) => {
+        await refresh().catch(() => {}); // an old demo may have been removed before the import failed
         setDemo({ busy: false, error: e.message });
         go("import");
       });

@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import pkg from "./package.json";
+import pkg from "./package.json" with { type: "json" };
+import { fetchMedia } from "./scripts/media-path.mjs";
 
 
 /** The Content-Security-Policy from vercel.json, so the hosted site and local builds enforce the same lock. */
@@ -78,13 +79,43 @@ function demoInDev(): Plugin {
   };
 }
 
+/**
+ * /media/ locally (dev server and `vite preview`), like api/media.js on Vercel: skin images fetched from
+ * valorant-api.com server-side, so the browser still only talks to this site.
+ */
+function mediaLocal(): Plugin {
+  // Same fetch and checks as the Vercel function (api/media.js), via scripts/media-path.mjs.
+  const handle = async (req: { url?: string }, res: import("node:http").ServerResponse) => {
+    let path = "";
+    try {
+      path = decodeURIComponent((req.url ?? "").replace(/^\//, "").split("?")[0]);
+    } catch {
+      /* a malformed escape: not an allowed path */
+    }
+    const m = await fetchMedia(path);
+    res.statusCode = m.status;
+    res.setHeader("Cache-Control", m.cache);
+    if (m.body) res.setHeader("Content-Type", "image/png");
+    res.end(m.body ? Buffer.from(m.body) : undefined);
+  };
+  return {
+    name: "valosight-media-local",
+    configureServer(server) {
+      server.middlewares.use("/media", (req, res) => void handle(req, res));
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use("/media", (req, res) => void handle(req, res));
+    },
+  };
+}
+
 /** The home page (home/): the app's "Home" button links there. Change it when valosight.in goes live. */
 const HOME_URL = "https://valosight.vercel.app";
 /** The home page's dev server (`cd home && npm run dev`). */
 const LOCAL_HOME_URL = "http://localhost:5175";
 
 export default defineConfig(({ command }) => ({
-  plugins: [react(), tailwindcss(), valosight(), demoInDev()],
+  plugins: [react(), tailwindcss(), valosight(), demoInDev(), mediaLocal()],
   // The home page's dev server links here (home/vite.config.ts), so keep the port fixed.
   server: { port: 5174, strictPort: true },
   build: { chunkSizeWarningLimit: 1500 },

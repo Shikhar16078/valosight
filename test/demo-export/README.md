@@ -6,7 +6,8 @@ Everything in it is invented. It has the same files and fields as a real export,
 
 - **Player:** Demo Player#DEMO, EU realm, store in Germany, pays in EUR. Email `demo.player@example.com` (a domain reserved for examples).
 - **IP addresses:** only from the ranges reserved for documentation (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`), which never belong to a real network.
-- **What's inside:** about 3½ years of matches (Feb 2023 – Oct 2026), VP top-ups and skin purchases with Radianite upgrades, battle passes, Night Market buys, two penalties, and a suspicious night-time login from an unknown network followed by a password reset and 2-step verification. The Security page has something to show.
+- **Items:** only real VALORANT items, with their real editions, prices, upgrade levels and variant names (from the public game data): about 80 skins and knives (Champions skins only during their event), the Mystbloom and Imperium bundles, 21 battle passes on Riot's real act calendar (recorded the way Riot records them, one with the act left blank), Night Market deals, Radianite upgrades, Kingdom Credits accessories, agent gear and agent recruitments. Nothing is bought before it went on sale.
+- **What's inside:** 4⅓ years of play (Jun 2022 – Oct 2026): about 2,400 matches across every mode, 12,000+ sign-in events from a home line whose address changes every few weeks plus trips and a phone hotspot, 32 VP top-ups made when the VP runs out (one a gift), 350 store transactions, account security history (password changes and a reset, Riot ID changes, Riot flagging a trip abroad, a new phone for 2-step verification) and a suspicious night-time login from an unknown network followed by a password reset and 2-step verification, penalties, reports and voice transcripts.
 
 Regenerate it with:
 
@@ -14,9 +15,9 @@ Regenerate it with:
 python3 test/demo-export/make_demo_export.py
 ```
 
-The output is byte-identical on every run, and CI checks that the committed zip matches the script. Tests also use it: CI runs the end-to-end import tests and the engine parity check (Python vs in-browser) against it.
+The output is byte-identical on every run, and CI checks that the committed zip matches the script. Tests also use it: CI runs the whole-export import tests (`export.test.ts`) against it.
 
-Maintainers can prove the demo shares no value with a real export (read-only, in memory):
+Maintainers can prove the demo shares no value with a real export (read-only, in memory). Public game item names are allowed to match (they're the same for every player); everything else must not. It also reports how much of the real collection's item list the demo shares, and fails above half, so the demo never mirrors a real player:
 
 ```bash
 python3 test/demo-export/make_demo_export.py --check-against /path/to/real-export.zip

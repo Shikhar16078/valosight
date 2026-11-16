@@ -4,12 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/fetch-rates.mjs --optional && vite",
-    "build": "node scripts/fetch-rates.mjs && tsc -b && vite build",
+    "dev": "node scripts/fetch-rates.mjs --optional && node scripts/fetch-game.mjs --optional && vite",
+    "build": "node scripts/fetch-rates.mjs && node scripts/fetch-game.mjs --optional && tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "preview": "vite preview",
-    "rates": "node scripts/fetch-rates.mjs"
+    "rates": "node scripts/fetch-rates.mjs",
+    "game": "node scripts/fetch-game.mjs"
   },
   "dependencies": {
     "@fontsource/chakra-petch": "^5.3.0",

@@ -135,6 +135,8 @@ export interface VPItem {
   cost: number;
   where: string;
   pass?: string;
+  /** the pass's act ("E7A1", "S2026A5"), when known or worked out */
+  act?: string;
   /** true when the pass name was worked out from the purchase date */
   passEstimated?: boolean;
 }
@@ -156,9 +158,31 @@ const keyLabel = (k: string) => {
   return `Season ${n[1]} · Act ${n[2]}`;
 };
 
+/** A pass's episode or yearly season, for filters: "E7A1" → "Episode 7", "S2026A5" → "Season 2026". */
+export function passGroup(act: string | null | undefined): string {
+  const e = /^E(\d+)A/.exec(act ?? "");
+  if (e) return `Episode ${e[1]}`;
+  const y = /^S(\d+)A/.exec(act ?? "");
+  return y ? `Season ${y[1]}` : "Act not recorded";
+}
+/** Orders passGroup() labels oldest → newest (episodes before yearly seasons; unknown first). */
+export function passGroupRank(group: string): number {
+  const m = /^(Episode|Season) (\d+)$/.exec(group);
+  return !m ? -1 : m[1] === "Episode" ? +m[2] : 1000 + +m[2];
+}
+
 export function passName(src: string): string {
   const k = passKey(src);
   return k ? keyLabel(k) : UNNAMED_PASS;
+}
+
+/**
+ * Riot's own act calendar, from the game catalogue (lib/skins.ts calls this once it loads). When present it
+ * replaces the approximate dates below; those remain the fallback, and project acts the catalogue doesn't list yet.
+ */
+let officialActs: { key: string; start: number }[] | null = null;
+export function setOfficialActs(acts: { key: string; start: number }[]) {
+  officialActs = acts.length ? acts : null;
 }
 
 /**
@@ -182,6 +206,11 @@ function actCalendar(untilYear: number): { key: string; start: number }[] {
   const out = EPISODE_ACTS.map(([key, d]) => ({ key, start: Date.parse(d + "T00:00:00Z") }));
   for (let y = 2025; y <= untilYear; y++)
     SEASON_2025.forEach((d, i) => out.push({ key: `S${y}A${i + 1}`, start: Date.parse(d + "T00:00:00Z") + (y - 2025) * 364 * 864e5 }));
+  if (officialActs) {
+    const last = officialActs[officialActs.length - 1].start;
+    const known = new Set(officialActs.map((a) => a.key));
+    return [...officialActs, ...out.filter((a) => !known.has(a.key) && a.start > last)].sort((a, b) => a.start - b.start);
+  }
   return out.sort((a, b) => a.start - b.start);
 }
 
@@ -199,7 +228,8 @@ function inferPasses(all: VPItem[]) {
     const unnamedPass = it.category === "Battle Pass" && it.pass === UNNAMED_PASS;
     const unknownPass = it.category === "Unknown" && it.cost === 1000;
     if (!unnamedPass && !unknownPass) continue;
-    const t = Date.parse(it.t) + 864e5; // a day of slack for timezones/launch-day buys
+    // Riot's own act dates are exact; the approximate calendar gets a day of slack for launch-day buys.
+    const t = Date.parse(it.t) + (officialActs ? 0 : 864e5);
     let i = cal.findLastIndex((a) => a.start <= t);
     while (i >= 0 && i < cal.length - 1 && owned.has(cal[i].key) && cal[i + 1].start <= t + 30 * 864e5) i++;
     if (i < 0 || owned.has(cal[i].key)) continue;
@@ -225,6 +255,7 @@ export function classifyAllVP(records: Rec[], all: Rec[] = records): VPItem[] {
       it.weapon = "";
       it.where = "Battle Pass";
       it.pass = `${keyLabel(k)} (estimated)`;
+      it.act = k;
       it.passEstimated = true;
     }
     if (it.r.transaction_id) byId.set(it.r.transaction_id, it);
@@ -247,7 +278,7 @@ export function classifyVP(r: Rec): VPItem {
   const cost = Number(r.spent_currency_amount) || 0;
   const base = { r, t: r._t as string, cost };
   if (/battle pass/i.test(src) || /^BP /.test(r.item_type ?? ""))
-    return { ...base, category: "Battle Pass", name: "Battle Pass", weapon: "", where: "Battle Pass", pass: passName(src) };
+    return { ...base, category: "Battle Pass", name: "Battle Pass", weapon: "", where: "Battle Pass", pass: passName(src), act: passKey(src) ?? undefined };
   if (r.item_type === "Bundle") return { ...base, category: "Bundle", name: r.item_name, weapon: "Bundle", where: SRC[src] ?? "Bundle" };
   if (!r.item_name || r.item_name === "Unknown" || /^CatalogEntry_/.test(r.item_name))
     return { ...base, category: "Unknown", name: cost === 1000 ? "Unknown item (likely Battle Pass)" : "Unknown item", weapon: "", where: SRC[src] ?? "Not recorded" };
@@ -502,6 +533,9 @@ export function upgradeLabel(u: Upgrade): string {
 
 /** Riot's regular weapon-skin prices (VP). Night Market prices are a discount on one of these. */
 export const STANDARD_PRICES = [875, 1275, 1775, 2175, 2475, 2675, 2975];
+
+/** Standard store price of a gun skin by Riot edition. Exclusive prices vary, and melee costs more, so neither is here. */
+export const EDITION_PRICE: Record<string, number> = { Select: 875, Deluxe: 1275, Premium: 1775, Ultra: 2475 };
 
 /** Approximate edition from the price paid (melee priced separately). */
 export function editionOf(cost: number, weapon: string): string {

@@ -10,10 +10,13 @@ import { goTo } from "../lib/focus";
 import { HIDDEN, PrivacyToggle, Sens, usePrivacy } from "../lib/privacy";
 import { Card, KV, Page } from "../components/ui";
 import { SOFT_CSS } from "../components/anim";
+import { SkinImage } from "../components/SkinImage";
+import { useSkinCatalog } from "../lib/skins";
 
 export function Overview() {
   const { detail, range, inRange } = useAccount();
   const pv = usePrivacy();
+  const cat = useSkinCatalog();
   const maskIp = useMaskIp();
   const { f } = useSettings();
   const info = (detail?.snapshots[DS.info] ?? {}) as Record<string, string>;
@@ -101,7 +104,7 @@ export function Overview() {
     for (const p of pay.data) if (p.currency_code === main) methods.set(payMethod(p.payment_method), (methods.get(payMethod(p.payment_method)) ?? 0) + amountPaid(p));
     const topMethod = [...methods.entries()].sort((a, b) => b[1] - a[1])[0];
     return { main, total: spend[0][1], rows, topMethod };
-  }, [spend, store.all, payAll.all, pay.data, inRange]);
+  }, [spend, store.all, payAll.all, pay.data, inRange, cat]); // eslint-disable-line react-hooks/exhaustive-deps -- cat: pass naming
 
   const byYear = useMemo(() => {
     const main = spend[0]?.[0];
@@ -118,7 +121,7 @@ export function Overview() {
   }, [pay.data, spend, f]);
 
   // ---- 3. Collection ----
-  const vpItems = useMemo(() => classifyAllVP(store.data, store.all), [store.data, store.all]);
+  const vpItems = useMemo(() => classifyAllVP(store.data, store.all), [store.data, store.all, cat]); // `cat`: its act calendar names passes
   const latestSkins = useMemo(() => vpItems.filter((x) => x.category === "Skin").sort((a, b) => (b.t ?? "").localeCompare(a.t ?? "")).slice(0, 5), [vpItems]);
   const coll = useMemo(() => {
     const ups = groupUpgrades(store.data.filter(isRP).map(parseUpgrade));
@@ -314,9 +317,10 @@ export function Overview() {
             <ul className="divide-y divide-line">
               {latestSkins.map((s) => (
                 <li key={s.r.transaction_id}>
-                  <button type="button" disabled={!toColl} onClick={() => goTo("collection", { filter: "skin", value: s.name })} title={`Show ${s.name}`} className="-mx-2 flex w-[calc(100%+1rem)] items-baseline justify-between gap-3 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-panel-2">
-                    <span className="min-w-0 truncate">
-                      <span className="font-medium">{s.name}</span> <span className="text-faint">· {s.weapon}</span>
+                  <button type="button" disabled={!toColl} onClick={() => goTo("collection", { filter: "skin", value: s.name })} title={`Show ${s.name}`} className="-mx-2 flex w-[calc(100%+1rem)] items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-panel-2">
+                    {cat && <SkinImage src={cat.find(s.name)?.image} className="h-7 w-16 shrink-0" />}
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-medium">{s.name}</span> <span className="text-faint">· {cat?.find(s.name)?.skin.weapon ?? s.weapon}</span>
                     </span>
                     <span className="num shrink-0 text-[12px] text-muted">
                       {guard(s.t, f.date(s.t))} · {n0(s.cost)} VP

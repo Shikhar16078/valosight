@@ -34,6 +34,11 @@ export interface Settings {
   fx?: Record<string, Record<string, number>>;
   /** Download exchange rates (past and today's) instead of typing them. Opt-in: it's the app's only internet use. */
   autoRates?: boolean;
+  /**
+   * Show item pictures (skins, cards, sprays…). They load from Valosight's own site (/media/), which therefore
+   * sees which pictures a visitor asks for; off = no picture requests at all. Default on (undefined = on).
+   */
+  pictures?: boolean;
 }
 
 export const DEFAULTS: Settings = { tz: "Asia/Kolkata", dateFmt: "dd-MMM-yyyy", hour12: true, theme: "vault", darkTheme: "vault", lightTheme: "paper", spotlight: true, neon: "hover", ambient: true, tilt: true, motion: "system", homeCurrency: "", rates: {} };

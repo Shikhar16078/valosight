@@ -28,6 +28,11 @@ Thumbs.db
 app/dist/
 # published exchange rates, fetched at build time (npm run rates)
 app/public/rates/
+# published game data (skins, editions), fetched at build time (npm run game)
+app/public/game/
 # landing site build output and dependencies
 home/node_modules/
 home/dist/
+
+# Claude Code local state (agent worktrees, local settings)
+.claude/

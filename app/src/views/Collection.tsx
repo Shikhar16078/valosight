@@ -1,17 +1,24 @@
 import { motion } from "motion/react";
 import { useDateGuard } from "../lib/privacy-dates";
 import { Sens, usePrivacy } from "../lib/privacy";
-import { ChevronDown, ChevronsUpDown, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronsUpDown, Search, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAccount, useRecords } from "../lib/account";
 import { localParts, useSettings } from "../lib/settings";
 import { allocateVP } from "../lib/fifo";
 import { useMoney } from "../lib/convert";
-import { DS, EDITIONS, WEAPON_CLASSES, WEAPON_ORDER, weaponClass, classifyOther, editionOf, money, nightMarketBase, classifyAllVP, currencyUnit, groupUpgrades, isRP, isVP, n0, parseUpgrade, upgradeLabel, type SkinUpgrades, type Upgrade, type VPItem, VP_GROUPS } from "../lib/valorant";
+import { useSkinCatalog } from "../lib/skins";
+import { SkinImage } from "../components/SkinImage";
+import { SkinInspect } from "./SkinInspect";
+import { PassInspect } from "./PassInspect";
+import { OtherInspect } from "./OtherInspect";
+import { useBattlePasses } from "../lib/passes";
+import { useAccessories } from "../lib/accessories";
+import { DS, EDITION_PRICE, EDITIONS, WEAPON_CLASSES, WEAPON_ORDER, weaponClass, classifyOther, editionOf, money, nightMarketBase, classifyAllVP, passGroup, passGroupRank, currencyUnit, groupUpgrades, isRP, isVP, n0, parseUpgrade, upgradeLabel, type SkinUpgrades, type Upgrade, type VPItem, VP_GROUPS } from "../lib/valorant";
 import { Badge, Card, Chip, Empty, Page, Segmented, Stat, item } from "../components/ui";
 import { DataTable, type Col, type Facet, type Preset } from "../components/DataTable";
 import { Drawer } from "../components/Drawer";
-import { Collapse, SOFT_CSS, Swap, useDebounced } from "../components/anim";
+import { Collapse, SOFT, SOFT_CSS, Swap, useDebounced } from "../components/anim";
 import { scrollToSection, useIntent } from "../lib/focus";
 import { spotlight } from "../lib/motion";
 
@@ -36,6 +43,8 @@ const TL_KINDS: { value: TlKind; label: string }[] = [
   { value: "rp", label: "Radianite upgrades" },
   { value: "other", label: "Other purchases" },
 ];
+/** How many Night Market deals the card lists (the biggest discounts). */
+const NM_TOP = 3;
 type TlEntry = { key: string; t: string; kind: TlKind; dot: string; title: string; detail: string; cost: string };
 const SOURCES = ["Store", "Night Market", "Bundle"];
 const PREFS_KEY = "riotvault.collection";
@@ -79,14 +88,44 @@ export function Collection() {
   const [passesOpen, setPassesOpen] = useState(false);
   /** Skins drawer: every skin ("") or one weapon's; null = closed. */
   const [skinList, setSkinList] = useState<string | null>(null);
+  // The skin open in the detail panel (a tile, a drawer row or a collection-mate clicked).
+  // Kept by transaction ID, not by object: the item lists are rebuilt when the catalogue loads or the period
+  // changes, and an open window (with its ← / → position) must survive that.
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [passDetailId, setPassDetailId] = useState<string | null>(null);
+  const setDetail = (x: VPItem | null) => setDetailId(x?.r.transaction_id ?? null);
+  const setPassDetail = (x: VPItem | null) => setPassDetailId(x?.r.transaction_id ?? null);
   const [vpPreset, setVpPreset] = useState<Preset<VPItem> | null>(null);
+  const [upPreset, setUpPreset] = useState<Preset<Upgrade> | null>(null);
   const [otherCur, setOtherCur] = useState<string | null>(null);
   const [upView, setUpView] = useState<"skin" | "all">("skin");
 
-  const vp = useMemo(() => classifyAllVP(store.data, storeAll.all), [store.data, storeAll.all]);
+  // Riot's skin catalogue (lib/skins.ts): exact weapons, editions and pictures. Until it loads, or if it's
+  // unavailable, the estimates from the name and price are used.
+  const cat = useSkinCatalog();
+  const vp = useMemo(() => {
+    const items = classifyAllVP(store.data, storeAll.all);
+    if (!cat) return items;
+    return items.map((x) => {
+      const m = x.category === "Skin" ? cat.find(x.name) : null;
+      return m && m.skin.weapon !== x.weapon ? { ...x, weapon: m.skin.weapon } : x;
+    });
+  }, [store.data, storeAll.all, cat]);
+  /** Edition: Riot's own when the catalogue knows the skin, else estimated from the (regular) price. */
+  const editionOfSkin = useCallback(
+    (s: VPItem, all: VPItem[]) => cat?.find(s.name)?.skin.edition?.name ?? editionOf(s.where === "Night Market" ? nightMarketBase(s, all).base : s.cost, s.weapon),
+    [cat],
+  );
   // Memoized: editionById and the table facets depend on these, and a new list each render would reset the tables.
   const skins = useMemo(() => vp.filter((x) => x.category === "Skin"), [vp]);
-  const passes = useMemo(() => vp.filter((x) => x.category === "Battle Pass"), [vp]);
+  // Skins the catalogue doesn't know (yet): their edition is an estimate, which the edition views must say.
+  const estimatedEditions = useMemo(() => (cat ? skins.filter((s) => !cat.find(s.name)?.skin.edition).length : 0), [cat, skins]);
+  const passes = useMemo(() => vp.filter((x) => x.category === "Battle Pass").sort((a, b) => (b.t ?? "").localeCompare(a.t ?? "")), [vp]);
+  const vpById = useMemo(() => new Map(vp.map((x) => [x.r.transaction_id, x])), [vp]);
+  const detail = (detailId && vpById.get(detailId)) || null;
+  const passDetail = (passDetailId && vpById.get(passDetailId)) || null;
+  // What each pass offered (lib/passes.ts): loaded once the passes are first looked at.
+  const passContent = useBattlePasses(passesOpen || !!passDetail);
   const bundles = useMemo(() => vp.filter((x) => x.category === "Bundle"), [vp]);
   const upgrades = useMemo<Upgrade[]>(() => store.data.filter(isRP).map(parseUpgrade), [store.data]);
   const upBySkin = useMemo(() => groupUpgrades(upgrades), [upgrades]);
@@ -96,24 +135,32 @@ export function Collection() {
     const order = ["Select", "Deluxe", "Premium", "Exclusive", "Ultra", "Melee"];
     const m = new Map<string, { n: number; vp: number }>();
     for (const s of skins) {
-      const e = editionOf(s.where === "Night Market" ? nightMarketBase(s, skins).base : s.cost, s.weapon);
+      const e = editionOfSkin(s, skins);
       const x = m.get(e) ?? { n: 0, vp: 0 };
       x.n++;
       x.vp += s.cost;
       m.set(e, x);
     }
     return order.filter((o) => m.has(o)).map((o) => [o, m.get(o)!] as const);
-  }, [skins]);
+  }, [skins, editionOfSkin]);
   const nightMarket = useMemo(
     () =>
       skins
         .filter((s) => s.where === "Night Market")
         .map((s) => {
-          const { base, how } = nightMarketBase(s, skins);
-          return { s, base, how, saved: base - s.cost };
+          // Best evidence first: a skin of the same collection bought at full price, then the standard price of
+          // its Riot edition, then the next standard price above what was paid.
+          const nb = nightMarketBase(s, skins);
+          const ed = cat?.find(s.name)?.skin.edition?.name;
+          const ep = ed && s.weapon !== "Melee" ? EDITION_PRICE[ed] : undefined;
+          const useEd = nb.how !== "collection" && !!ep && ep > s.cost;
+          const base = useEd ? ep! : nb.base;
+          return { s, base, how: (useEd ? "edition" : nb.how) as "collection" | "edition" | "tier", edition: ed, saved: base - s.cost };
         }),
-    [skins],
+    [skins, cat],
   );
+  // The card lists only the biggest discounts (by %); the total covers them all.
+  const nmTop = useMemo(() => [...nightMarket].sort((a, b) => b.saved / b.base - a.saved / a.base).slice(0, NM_TOP), [nightMarket]);
   const upRows = useMemo(() => [...upBySkin.values()].sort((a, b) => b.last.localeCompare(a.last)), [upBySkin]);
 
   const byWeapon = useMemo(() => {
@@ -177,7 +224,11 @@ export function Collection() {
   useIntent("collection", !store.loading && !storeAll.loading, (i) => {
     // From Overview: the skins grid (all, or one skin) and the battle-pass list.
     if (i.filter === "all") return setSkinList("");
-    if (i.filter === "skin" && i.value) return showSkins({ q: i.value });
+    // From Overview's latest skins: open that skin's detail (or search the grid if it isn't a single skin).
+    if (i.filter === "skin" && i.value) {
+      const one = vp.find((x) => x.category === "Skin" && x.name === i.value);
+      return one ? setDetail(one) : showSkins({ q: i.value });
+    }
     if (i.filter === "passes") return setPassesOpen(true);
     const g = i.filter === "category" ? VP_GROUPS.find((x) => x.key === i.value) : undefined;
     setVpPreset(g ? { label: g.label, test: (r) => r.category === g.category } : null);
@@ -185,10 +236,41 @@ export function Collection() {
 
   const editionById = useMemo(() => {
     const m = new Map<VPItem, string>();
-    for (const s of skins) m.set(s, editionOf(s.where === "Night Market" ? nightMarketBase(s, skins).base : s.cost, s.weapon));
+    for (const s of skins) m.set(s, editionOfSkin(s, skins));
     for (const b of bundles) m.set(b, "Bundle");
     return m;
-  }, [skins, bundles]);
+  }, [skins, bundles, editionOfSkin]);
+  // The open skin's details, and its place among your skins (newest first) for ← / → in the Inspect view.
+  const byNewest = useMemo(() => [...skins].sort((a, b) => (b.t ?? "").localeCompare(a.t ?? "")), [skins]);
+  const detailAt = detail ? byNewest.indexOf(detail) : -1;
+  const passAt = passDetail ? passes.indexOf(passDetail) : -1;
+  const detailProps = detail
+    ? {
+        item: detail,
+        match: cat?.find(detail.name) ?? null,
+        upgrades: upBySkin.get(detail.name),
+        edition: editionById.get(detail),
+        cost: realCost.get(detail.r.transaction_id),
+        catalog: cat,
+        owned,
+        picture: detail.category === "Bundle" ? cat?.findBundle(detail.name)?.image : null,
+        onOpen: (name: string) => setDetail(skins.find((x) => x.name === name) ?? null),
+        // From the skin view to the transaction itself: the purchase in All VP purchases, or one upgrade.
+        onShowPurchase: () => {
+          const it = detail;
+          setDetail(null);
+          setVpPreset({ label: it.name, test: (r) => r.r.transaction_id === it.r.transaction_id });
+          scrollToSection("vp-purchases", { flash: true, delay: 300 });
+        },
+        onShowUpgrade: (u: Upgrade) => {
+          setDetail(null);
+          setUpView("all");
+          setUpPreset({ label: `${u.skin} · ${upgradeLabel(u)}`, test: (r) => r.r.transaction_id === u.r.transaction_id });
+          // After the table has switched to "Every upgrade" (a cross-fade), so we land on its final height.
+          scrollToSection("radianite", { flash: true, delay: 650 });
+        },
+      }
+    : null;
 
   const dq = useDebounced(q);
   const shown = useMemo(() => {
@@ -239,13 +321,15 @@ export function Collection() {
       <SkinTile
         key={s.r.transaction_id}
         s={s}
+        image={s.category === "Bundle" ? cat?.findBundle(s.name)?.image : cat?.find(s.name)?.image}
+        onOpen={() => setDetail(s)}
         sub={[prefs.group !== "weapon" && prefs.group !== "class" && s.category === "Skin" ? s.weapon : null, prefs.group !== "edition" && editionById.get(s) !== "Bundle" ? editionById.get(s) : null, prefs.group === "year" || prefs.group === "source" ? null : guard(s.t, f.date(s.t))].filter(Boolean).join(" · ")}
         date={prefs.group === "year" || prefs.group === "source" ? guard(s.t, f.date(s.t)) : null}
         where={prefs.group !== "source" && s.where !== "Daily Store" ? s.where.replace(" (single item)", "") : null}
         badge={<UpgradeBadge u={upBySkin.get(s.name)} />}
       />
     ),
-    [prefs.group, editionById, upBySkin, f, guard],
+    [prefs.group, editionById, upBySkin, f, guard, cat],
   );
 
   /** One flat list of groups, each a header plus its skins (weapon type keeps weapons together inside a class). */
@@ -255,6 +339,13 @@ export function Collection() {
   );
 
   const other = useMemo(() => store.data.filter((r) => !isVP(r) && !isRP(r)).map(classifyOther).reverse(), [store.data]);
+  // Pictures for named accessories (sprays, buddies, cards…), loaded only when some were bought by name.
+  const accessories = useAccessories(other.some((o) => !o.note));
+  // The list as shown (a total clicked filters it) and the one open in the Inspect window, by transaction ID.
+  const otherShown = useMemo(() => other.filter((o) => !otherCur || o.currency === otherCur), [other, otherCur]);
+  const [otherId, setOtherId] = useState<string | null>(null);
+  const otherAt = otherId ? otherShown.findIndex((o) => o.r.transaction_id === otherId) : -1;
+  const otherOpen = otherAt >= 0 ? otherShown[otherAt] : null;
   const otherTotals = useMemo(() => {
     const m = new Map<string, { n: number; spent: number }>();
     for (const o of other) {
@@ -299,7 +390,22 @@ export function Collection() {
 
   const cols: Col<VPItem>[] = [
     { id: "date", header: "Date", value: (r) => r.t, cell: (r) => <span className="num">{guard(r.t, f.date(r.t))}</span> },
-    { id: "name", header: "Item", value: (r) => (r.category === "Battle Pass" ? r.pass : r.name), cell: (r) => <span className="font-medium">{r.category === "Battle Pass" ? r.pass : r.name}</span> },
+    {
+      id: "name",
+      header: "Item",
+      value: (r) => (r.category === "Battle Pass" ? r.pass : r.name),
+      cell: (r) => (
+        <span className="flex items-center gap-3">
+          {cat &&
+            (r.category === "Battle Pass" ? (
+              <SkinImage src={cat.passImage(r.act)} fit="cover" className="h-7 w-16 shrink-0 rounded-[5px]" />
+            ) : (
+              <SkinImage src={r.category === "Skin" ? cat.find(r.name)?.image : r.category === "Bundle" ? cat.findBundle(r.name)?.image : null} className="h-7 w-16 shrink-0" />
+            ))}
+          <span className="font-medium">{r.category === "Battle Pass" ? r.pass : r.name}</span>
+        </span>
+      ),
+    },
     { id: "weapon", header: "Weapon", value: (r) => r.weapon },
     { id: "cat", header: "Type", value: (r) => r.category, cell: (r) => <Badge tone={r.category === "Skin" ? "accent" : r.category === "Battle Pass" ? "warn" : r.category === "Bundle" ? "info" : "neutral"}>{r.category}</Badge> },
     { id: "cost", header: "VP", value: (r) => r.cost, cell: (r) => <span className="num">{n0(r.cost)}</span>, align: "right" },
@@ -323,12 +429,17 @@ export function Collection() {
     { id: "tx", header: "Transaction ID", secret: true, value: (r) => r.r.transaction_id, cell: (r) => <Sens className="num">{pv.id(r.r.transaction_id)}</Sens> },
   ];
 
+  const only = (p: Record<string, string>, rows: VPItem[], category: string) => p.cat === category || (rows.length > 0 && rows.every((r) => r.category === category));
   const vpFacets = useMemo<Facet<VPItem>[]>(
     () => [
     { id: "year", label: "Year", value: (r) => (r.t ? f.monthKey(r.t).slice(0, 4) : null), order: (a, b) => b.localeCompare(a) },
     { id: "cat", label: "Type", value: (r) => r.category },
-    { id: "weapon", label: "Weapon", value: (r) => (r.category === "Skin" ? r.weapon : null), order: (a, b) => rank(WEAPON_ORDER, a) - rank(WEAPON_ORDER, b) },
-    { id: "edition", label: "Edition", value: (r) => (r.category === "Skin" ? (editionById.get(r) ?? null) : null), order: (a, b) => rank(EDITIONS, a) - rank(EDITIONS, b) },
+    // Which passes: by episode (2020–2024) or yearly season (2025 on), newest first.
+    // Narrowing filters appear once only that type is shown (picked in Type, or by a filter from another page,
+    // e.g. Money's "Where your VP went"): which passes for battle passes; weapon and edition for skins.
+    { id: "pass", label: "Battle pass", value: (r) => (r.category === "Battle Pass" ? passGroup(r.act) : null), order: (a, b) => passGroupRank(b) - passGroupRank(a), when: (p, rows) => only(p, rows, "Battle Pass") },
+    { id: "weapon", label: "Weapon", value: (r) => (r.category === "Skin" ? r.weapon : null), order: (a, b) => rank(WEAPON_ORDER, a) - rank(WEAPON_ORDER, b), when: (p, rows) => only(p, rows, "Skin") },
+    { id: "edition", label: "Edition", value: (r) => (r.category === "Skin" ? (editionById.get(r) ?? null) : null), order: (a, b) => rank(EDITIONS, a) - rank(EDITIONS, b), when: (p, rows) => only(p, rows, "Skin") },
     { id: "where", label: "Bought from", value: (r) => sourceOf(r.where) },
     { id: "paid", label: "Paid with", value: (r) => (realCost.get(r.r.transaction_id)?.cur ? "Bought VP" : "Free VP") },
   ],
@@ -348,8 +459,9 @@ export function Collection() {
       header: "Skin",
       value: (r) => r.skin,
       cell: (r) => (
-        <div className="min-w-0 max-w-[380px]">
+        <div className="min-w-0 max-w-[440px]">
           <div className="flex items-center gap-2">
+            {cat && <SkinImage src={cat.find(r.skin)?.image} className="h-7 w-16 shrink-0" />}
             <span className="font-medium">{r.skin === "Unknown skin" ? "Unknown skin (name not recorded by Riot)" : r.skin}</span>
             {r.skin !== "Unknown skin" && !owned.has(r.skin) && <Badge tone="info">not bought separately</Badge>}
           </div>
@@ -378,8 +490,18 @@ export function Collection() {
   const evCols: Col<Upgrade>[] = [
     { id: "date", header: "Date", value: (u) => u.t, cell: (u) => <span className="num">{guard(u.t, f.date(u.t))}</span> },
     { id: "time", header: `Time (${f.tzLabel})`, value: (u) => f.time(u.t), mono: true },
-    { id: "skin", header: "Skin", value: (u) => u.skin, cell: (u) => <span className="font-medium">{u.skin === "Unknown skin" ? "Unknown skin (not recorded)" : u.skin}</span> },
-    { id: "what", header: "Upgrade", value: (u) => upgradeLabel(u), cell: (u) => <UpgradeChip u={u} /> },
+    {
+      id: "skin",
+      header: "Skin",
+      value: (u) => u.skin,
+      cell: (u) => (
+        <span className="flex items-center gap-3">
+          {cat && <SkinImage src={cat.find(u.skin)?.image} className="h-7 w-16 shrink-0" />}
+          <span className="font-medium">{u.skin === "Unknown skin" ? "Unknown skin (not recorded)" : u.skin}</span>
+        </span>
+      ),
+    },
+    { id: "what", header: "Upgrade", value: (u) => upgradeLabel(u), cell: (u) => <UpgradeChip u={u} swatch={u.variant ? cat?.find(u.r.item_name)?.chroma?.swatch : null} /> },
     { id: "perk", header: "Unlocks", wrap: true, value: (u) => u.perk ?? "", cell: (u) => <span className="block max-w-[360px] text-[12.5px] text-muted">{u.perk}</span> },
     { id: "rp", header: "RP", value: (u) => u.cost, mono: true, align: "right" },
   ];
@@ -401,40 +523,65 @@ export function Collection() {
       <Stat label="Most collected" onClick={fav ? () => setSkinList(fav[0]) : undefined} action={fav ? `List your ${fav[0]} skins` : undefined} value={fav ? fav[0] : "—"} sub={fav ? `${fav[1].length} skins` : undefined} />
       <Stat label="Radianite spent" onClick={upRows.length ? () => scrollToSection("radianite") : undefined} action="Show Radianite upgrades" value={rpSpent} tone="win" sub={`${upgrades.length} upgrades on ${[...upBySkin.keys()].filter((k) => k !== "Unknown skin").length} skins`} />
 
-      <Card span={6} title="Skins by edition" hint="Estimated from the regular price (Night Market buys use their estimated regular price). Click an edition to see its skins.">
+      <Card
+        span={6}
+        title="Skins by edition"
+        hint={
+          !cat
+            ? "Estimated from the regular price (Night Market buys use their estimated regular price). Click an edition to see its skins."
+            : estimatedEditions
+              ? `Editions from Riot's game data; ${estimatedEditions} skin${estimatedEditions === 1 ? "" : "s"} it doesn't list yet estimated from the price. Click an edition to see its skins.`
+              : "Editions from Riot's game data. Click an edition to see its skins."
+        }
+      >
         <div className="space-y-1">
-          {editions.map(([e, x]) => (
-            <button type="button" key={e} onClick={() => showSkins({ eds: [e] })} title={`Show ${e} skins`} className="grid w-[calc(100%+1rem)] grid-cols-[90px_1fr_auto] items-center gap-3 py-1 -mx-2 rounded-md px-2 text-left transition-colors hover:bg-panel-2">
-              <span className="font-medium">{e}</span>
-              <div className="h-2 overflow-hidden rounded-full bg-panel-2">
-                <div className="h-full rounded-full bg-accent" style={{ width: `${(x.n / Math.max(1, ...editions.map(([, y]) => y.n))) * 100}%` }} />
-              </div>
-              <span className="num text-[12.5px] text-muted">
-                {x.n} · {n0(x.vp)} VP
-              </span>
-            </button>
-          ))}
+          {editions.map(([e, x]) => {
+            // Riot's icon and colour for the edition, when the catalogue has it.
+            const ed = cat?.editions.find((t) => t.name === e);
+            return (
+              <button type="button" key={e} onClick={() => showSkins({ eds: [e] })} title={`Show ${e} skins`} className={`group grid w-[calc(100%+1rem)] grid-cols-[118px_1fr_auto] items-center gap-3 -mx-2 rounded-md px-2 py-1 text-left transition-colors ${SOFT_CSS} hover:bg-panel-2`}>
+                <span className="flex min-w-0 items-center gap-2">
+                  {ed?.icon && <SkinImage src={ed.icon} className={`h-5 w-5 shrink-0 transition-transform ${SOFT_CSS} group-hover:scale-110`} />}
+                  <span className="truncate font-medium">{e}</span>
+                </span>
+                <div className="h-2 overflow-hidden rounded-full bg-panel-2">
+                  <motion.div
+                    className="h-full origin-left rounded-full bg-accent"
+                    style={{ width: `${(x.n / Math.max(1, ...editions.map(([, y]) => y.n))) * 100}%`, ...(ed?.color ? { background: ed.color } : {}) }}
+                    initial={{ scaleX: 0 }}
+                    whileInView={{ scaleX: 1 }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 0.7, ease: SOFT.ease }}
+                  />
+                </div>
+                <span className="num text-[12.5px] text-muted">
+                  {x.n} · {n0(x.vp)} VP
+                </span>
+              </button>
+            );
+          })}
         </div>
       </Card>
-      <Card span={6} title="Night Market savings" hint="Regular price estimated from skins of the same collection you bought at full price, otherwise the next standard price" right={nightMarket.length ? <button type="button" onClick={() => showSkins({ srcs: ["Night Market"] })} className="whitespace-nowrap text-[12.5px] font-medium text-accent hover:underline">Show in grid</button> : undefined}>
+      <Card span={6} title="Night Market savings" hint="Compared with the skin's regular price (estimated for Exclusive and melee)" right={nightMarket.length ? <button type="button" onClick={() => showSkins({ srcs: ["Night Market"] })} className="whitespace-nowrap text-[12.5px] font-medium text-accent hover:underline">{nightMarket.length > NM_TOP ? `See all ${nightMarket.length}` : "Show in grid"}</button> : undefined}>
         {nightMarket.length ? (
           <>
             <div className="num mb-3 text-[22px] font-medium text-win">
               {n0(nightMarket.reduce((a, x) => a + x.saved, 0))} VP <span className="text-[13px] font-normal text-muted">saved on {nightMarket.length} skins</span>
             </div>
+            {/* Only the biggest discounts (by %), so the card stays as tall as the edition card beside it; "See all" has every one. */}
             <ul className="divide-y divide-line">
-              {nightMarket.map(({ s, base, how, saved }) => (
+              {nmTop.map(({ s, base, how, edition, saved }) => (
                 <li key={s.r.transaction_id}>
                   <button type="button" onClick={() => showSkins({ q: s.name })} title={`Show ${s.name}`} className="flex w-[calc(100%+1rem)] items-baseline justify-between gap-3 py-1.5 text-[13px] -mx-2 rounded-md px-2 text-left transition-colors hover:bg-panel-2">
                   <span className="font-medium">{s.name}</span>
                   <span className="num text-muted">
-                    {n0(s.cost)} <span className="text-faint" title={how === "collection" ? "Regular price from another skin in this collection" : "Next standard price above what you paid"}>instead of ~{n0(base)}{how === "tier" ? "*" : ""}</span> · <span className="text-win">−{Math.round((saved / base) * 100)}%</span>
+                    {n0(s.cost)} <span className="text-faint" title={how === "collection" ? "Regular price from another skin in this collection" : how === "edition" ? `Standard price of a ${edition} skin` : "Next standard price above what you paid"}>instead of {how === "tier" ? "~" : ""}{n0(base)}{how === "tier" ? "*" : ""}</span> · <span className="text-win">−{Math.round((saved / base) * 100)}%</span>
                   </span>
                   </button>
                 </li>
               ))}
             </ul>
-            {nightMarket.some((x) => x.how === "tier") && <p className="mt-2 text-[12px] text-faint">* no other skin from that collection to compare with — next standard price used</p>}
+            {nmTop.some((x) => x.how === "tier") && <p className="mt-2 text-[12px] text-faint">* no other skin from that collection to compare with, so the next standard price is used</p>}
           </>
         ) : (
           <div className="py-6 text-center text-muted">No Night Market purchases in this period.</div>
@@ -477,7 +624,7 @@ export function Collection() {
               </label>
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <ChipGroup label="Edition" hint="Estimated from the price paid (Night Market buys use the regular price)">
+              <ChipGroup label="Edition" hint={!cat ? "Estimated from the price paid (Night Market buys use the regular price)" : estimatedEditions ? "Riot's editions; skins not in its game data yet are estimated from the price" : undefined}>
                 {EDITIONS.filter((e) => [...editionById.values()].includes(e)).map((e) => (
                   <Chip key={e} on={eds.has(e)} onClick={() => setEds((x) => toggle(x, e))}>
                     {e}
@@ -631,14 +778,14 @@ export function Collection() {
               expand={(r) => <UpgradeTimeline u={r} />}
             />
           ) : (
-            <DataTable key="every" rows={upgrades} cols={evCols} initialSort={{ id: "date", desc: true }} filename="radianite-upgrades" facets={upFacets} searchPlaceholder="Search skin, level, colour…" />
+            <DataTable key="every" rows={upgrades} cols={evCols} preset={upPreset} onClearPreset={() => setUpPreset(null)} initialSort={{ id: "date", desc: true }} filename="radianite-upgrades" facets={upFacets} searchPlaceholder="Search skin, level, colour…" />
           )}
           </Swap>
         </Card>
       )}
 
       {other.length > 0 && (
-        <Card span={12} title="Other purchases" hint="Things bought with Kingdom Credits or agent recruitment tokens — newest first. Click a total to show only those.">
+        <Card id="other-purchases" span={12} title="Other purchases" hint="Things bought with Kingdom Credits or agent recruitment tokens, newest first. Click one to inspect it, or a total to show only those.">
           <div className="mb-4 flex flex-wrap gap-3">
             {otherTotals.map(([cur, e]) => {
               const u = currencyUnit(cur);
@@ -650,7 +797,10 @@ export function Collection() {
                   onClick={() => setOtherCur((c) => (c === cur ? null : cur))}
                   className={`rounded-lg border px-3.5 py-2 text-left transition-colors ${otherCur === cur ? "border-accent bg-accent-soft" : "border-line bg-panel-2 hover:border-line-strong"}`}
                 >
-                  <div className="text-[11.5px] uppercase tracking-[0.1em] text-muted">{u.many}</div>
+                  <div className="flex items-center gap-1.5 text-[11.5px] uppercase tracking-[0.1em] text-muted">
+                    {cat?.currencyIcon(cur) && <SkinImage src={cat.currencyIcon(cur)} className="h-4 w-4 shrink-0" />}
+                    {u.many}
+                  </div>
                   <div className="num mt-0.5">
                     <span className="text-[17px] font-medium">{n0(e.spent)}</span> <span className="text-muted">{e.spent === 1 ? u.one : u.short === "token" ? "used" : "spent"}</span>
                     <span className="text-faint"> · {e.n} item{e.n === 1 ? "" : "s"}</span>
@@ -661,21 +811,30 @@ export function Collection() {
           </div>
           <Swap k={otherCur ?? "all"}>
           <ul className="divide-y divide-line">
-            {other.filter((o) => !otherCur || o.currency === otherCur).map((o) => {
+            {otherShown.map((o) => {
               const u = currencyUnit(o.currency);
               return (
-                <li key={o.r.transaction_id} className="grid grid-cols-[96px_1fr_auto] items-center gap-x-4 gap-y-1 py-2.5 sm:grid-cols-[110px_1fr_130px_150px]">
-                  <span className="num text-[12.5px] text-muted">{guard(o.t, f.date(o.t))}</span>
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{o.name}</div>
-                    {o.note && <div className="text-[12px] text-faint">{o.note}</div>}
-                  </div>
-                  <span className="hidden sm:block">
-                    <Badge tone={o.kind === "Agent unlock" ? "info" : o.kind === "Agent gear" ? "warn" : "neutral"}>{o.kind}</Badge>
-                  </span>
-                  <span className="num whitespace-nowrap text-right">
-                    {n0(o.cost)} <span className="text-muted">{u.short === "token" ? (o.cost === 1 ? "token" : "tokens") : u.short}</span>
-                  </span>
+                <li key={o.r.transaction_id}>
+                  {/* Phones: picture, name with the date under it, amount. Wider: date, picture, name, kind, amount. */}
+                  <button
+                    type="button"
+                    onClick={() => setOtherId(o.r.transaction_id)}
+                    className={`group -mx-2 grid w-[calc(100%+1rem)] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-x-3 rounded-lg px-2 py-2.5 text-left transition-colors ${SOFT_CSS} hover:bg-panel-2 sm:grid-cols-[110px_44px_minmax(0,1fr)_130px_150px] sm:gap-x-4`}
+                  >
+                    <span className="num hidden text-[12.5px] text-muted sm:block">{guard(o.t, f.date(o.t))}</span>
+                    <OtherThumb item={accessories?.image(o.note ? null : o.name)} currency={cat?.currencyIcon(o.currency)} />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{o.name}</span>
+                      <span className="num block text-[12px] text-muted sm:hidden">{guard(o.t, f.date(o.t))}</span>
+                      {o.note && <span className="block truncate text-[12px] text-faint">{o.note}</span>}
+                    </span>
+                    <span className="hidden sm:block">
+                      <Badge tone={o.kind === "Agent unlock" ? "info" : o.kind === "Agent gear" ? "warn" : "neutral"}>{o.kind}</Badge>
+                    </span>
+                    <span className="num whitespace-nowrap text-right">
+                      {n0(o.cost)} <span className="text-muted">{u.short === "token" ? (o.cost === 1 ? "token" : "tokens") : u.short}</span>
+                    </span>
+                  </button>
                 </li>
               );
             })}
@@ -710,15 +869,32 @@ export function Collection() {
           return groups.map(([w, l]) => (
             <section key={w}>
               {!skinList && (
-                <div className="sticky top-0 z-10 flex items-baseline justify-between border-b border-line bg-panel-2 px-5 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.1em] text-muted">
+                <div className="sticky top-0 z-10 flex items-baseline justify-between border-b border-line bg-panel-2/85 px-6 py-1.5 backdrop-blur-md text-[11.5px] font-semibold uppercase tracking-[0.1em] text-muted">
                   <span>{w}</span>
                   <span className="num font-normal normal-case tracking-normal">{l.length}</span>
                 </div>
               )}
               <ul className="divide-y divide-line">
                 {l.map((x) => (
-                  <li key={x.r.transaction_id} className="flex items-start justify-between gap-3 px-5 py-2.5">
-                    <div className="min-w-0">
+                  <li
+                    key={x.r.transaction_id}
+                    onClick={() => {
+                      setSkinList(null);
+                      setDetail(x);
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSkinList(null);
+                        setDetail(x);
+                      }
+                    }}
+                    className={`flex cursor-pointer items-center justify-between gap-3 px-6 py-2.5 transition-colors ${SOFT_CSS} hover:bg-panel-2/70`}
+                  >
+                    {cat && <SkinImage src={cat.find(x.name)?.image} className="h-9 w-20 shrink-0" />}
+                    <div className="min-w-0 flex-1">
                       <div className="font-medium">{x.name}</div>
                       <div className="num text-[12px] text-muted">
                         {guard(x.t, f.date(x.t))}
@@ -737,30 +913,93 @@ export function Collection() {
           ));
         })()}
       </Drawer>
-      <Drawer open={passesOpen} onClose={() => setPassesOpen(false)} title={`Battle passes · ${passes.length}`} hint={`${n0(passes.reduce((a, s) => a + s.cost, 0))} VP · newest first. Names marked "estimated" come from the act calendar.`}>
+      {/* One skin opens in the Inspect window; lists of skins and passes stay in side drawers. */}
+      <SkinInspect
+        detail={detailProps}
+        onClose={() => setDetail(null)}
+        onPrev={detailAt > 0 ? () => setDetail(byNewest[detailAt - 1]) : undefined}
+        onNext={detailAt >= 0 && detailAt < byNewest.length - 1 ? () => setDetail(byNewest[detailAt + 1]) : undefined}
+        position={detailAt >= 0 ? { i: detailAt, n: byNewest.length } : undefined}
+      />
+      <Drawer
+        open={passesOpen}
+        onClose={() => setPassesOpen(false)}
+        title={`Battle passes · ${passes.length}`}
+        hint={`${n0(passes.reduce((a, s) => a + s.cost, 0))} VP · newest first. Open one to see every reward it offered. Names marked "estimated" come from the act calendar.`}
+      >
         <ul className="divide-y divide-line">
-          {[...passes]
-            .sort((a, b) => (b.t ?? "").localeCompare(a.t ?? ""))
-            .map((p) => {
-              const c = realCost.get(p.r.transaction_id);
-              return (
-                <li key={p.r.transaction_id} className="flex items-start justify-between gap-3 px-5 py-3">
-                  <div className="min-w-0">
-                    <div className="font-medium">{p.pass ?? p.name}</div>
-                    <div className="num text-[12px] text-muted">
-                      {guard(p.t, f.date(p.t))}
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <div className="num text-[13px]">{n0(p.cost)} VP</div>
-                    {c?.cur ? <div className="num text-[11.5px] text-faint">≈ {money(c.money, c.cur)}</div> : null}
-                  </div>
-                </li>
-              );
-            })}
+          {passes.map((p) => {
+            const c = realCost.get(p.r.transaction_id);
+            const cover = cat?.passImage(p.act);
+            return (
+              <li key={p.r.transaction_id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPassesOpen(false);
+                    setPassDetail(p);
+                  }}
+                  className={`group flex w-full items-center gap-4 px-6 py-3 text-left transition-colors ${SOFT_CSS} hover:bg-panel-2/60`}
+                >
+                  <span className="relative h-11 w-28 shrink-0 overflow-hidden rounded-lg bg-panel-2/60">
+                    <SkinImage src={cover} fit="cover" className={`absolute inset-0 h-full w-full transition-transform ${SOFT_CSS} group-hover:scale-[1.06]`} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{p.pass ?? p.name}</span>
+                    <span className="num block text-[12px] text-muted">{guard(p.t, f.date(p.t))}</span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className="num block text-[13px]">{n0(p.cost)} VP</span>
+                    {c?.cur ? <span className="num block text-[11.5px] text-faint">≈ {money(c.money, c.cur)}</span> : null}
+                  </span>
+                  <ChevronRight size={16} className={`shrink-0 text-faint transition-transform ${SOFT_CSS} group-hover:translate-x-0.5 group-hover:text-ink`} />
+                </button>
+              </li>
+            );
+          })}
           {!passes.length && <li className="px-5 py-10 text-center text-muted">No battle passes in this period.</li>}
         </ul>
       </Drawer>
+      <OtherInspect
+        detail={
+          otherOpen
+            ? {
+                item: otherOpen,
+                image: accessories?.image(otherOpen.note ? null : otherOpen.name) ?? null,
+                currencyIcon: cat?.currencyIcon(otherOpen.currency) ?? null,
+                onShowInList: () => {
+                  setOtherId(null);
+                  scrollToSection("other-purchases", { flash: true, delay: 300 });
+                },
+              }
+            : null
+        }
+        onClose={() => setOtherId(null)}
+        onPrev={otherAt > 0 ? () => setOtherId(otherShown[otherAt - 1].r.transaction_id) : undefined}
+        onNext={otherAt >= 0 && otherAt < otherShown.length - 1 ? () => setOtherId(otherShown[otherAt + 1].r.transaction_id) : undefined}
+        position={otherAt >= 0 ? { i: otherAt, n: otherShown.length } : undefined}
+      />
+      <PassInspect
+        detail={
+          passDetail
+            ? {
+                item: passDetail,
+                pass: !passDetail.act ? null : passContent === undefined ? undefined : (passContent?.get(passDetail.act) ?? null),
+                cost: realCost.get(passDetail.r.transaction_id),
+                onShowPurchase: () => {
+                  const it = passDetail;
+                  setPassDetail(null);
+                  setVpPreset({ label: it.pass ?? "Battle pass", test: (r) => r.r.transaction_id === it.r.transaction_id });
+                  scrollToSection("vp-purchases", { flash: true, delay: 300 });
+                },
+              }
+            : null
+        }
+        onClose={() => setPassDetail(null)}
+        onPrev={passAt > 0 ? () => setPassDetail(passes[passAt - 1]) : undefined}
+        onNext={passAt >= 0 && passAt < passes.length - 1 ? () => setPassDetail(passes[passAt + 1]) : undefined}
+        position={passAt >= 0 ? { i: passAt, n: passes.length } : undefined}
+      />
     </Page>
   );
 }
@@ -810,9 +1049,16 @@ const SkinGroup = memo(function SkinGroup({ title, items, parts, bulk, tile }: {
 });
 
 /** One skin as a small tile: name, a detail line, where it was bought / Radianite level, and its VP. */
-function SkinTile({ s, sub, date, where, badge }: { s: VPItem; sub: string; date: string | null; where: string | null; badge: ReactNode }) {
+function SkinTile({ s, image, sub, date, where, badge, onOpen }: { s: VPItem; image?: string | null; sub: string; date: string | null; where: string | null; badge: ReactNode; onOpen: () => void }) {
   return (
-    <div onPointerMove={spotlight} className="spot relative flex min-w-0 flex-col justify-between gap-1.5 rounded-lg border border-line bg-panel-2/60 px-3 py-2 transition-colors hover:border-line-strong hover:bg-panel-3/60">
+    <button
+      type="button"
+      onClick={onOpen}
+      onPointerMove={spotlight}
+      title={`Open ${s.name}`}
+      className={`spot relative flex min-w-0 flex-col justify-between gap-1.5 rounded-lg border border-line bg-panel-2/60 px-3 py-2 text-left transition-colors ${SOFT_CSS} hover:border-line-strong hover:bg-panel-3/60`}
+    >
+      {image !== undefined && <SkinImage src={image} className="mx-auto h-14 w-full" />}
       <div className="min-w-0">
         <div className="line-clamp-2 text-[13px] font-medium leading-snug" title={s.name}>
           {s.name}
@@ -826,7 +1072,7 @@ function SkinTile({ s, sub, date, where, badge }: { s: VPItem; sub: string; date
         </div>
         <span className="num ml-auto shrink-0 text-[12.5px]">{n0(s.cost)}</span>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -857,8 +1103,14 @@ function UpgradeBadge({ u }: { u?: SkinUpgrades }) {
   );
 }
 
-function UpgradeChip({ u }: { u: Upgrade }) {
-  return <Badge tone={u.variant ? "info" : u.level ? "win" : "neutral"}>{upgradeLabel(u)}</Badge>;
+/** An upgrade as a chip; a variant shows its colour swatch from the catalogue. */
+function UpgradeChip({ u, swatch }: { u: Upgrade; swatch?: string | null }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {swatch && <SkinImage src={swatch} className="h-5 w-5 shrink-0 rounded-[5px]" />}
+      <Badge tone={u.variant ? "info" : u.level ? "win" : "neutral"}>{upgradeLabel(u)}</Badge>
+    </span>
+  );
 }
 
 /** Vertical timeline of one skin's upgrades, oldest first. */
@@ -904,3 +1156,15 @@ function ChipGroup({ label, hint, children }: { label: string; hint?: string; ch
   );
 }
 
+
+/**
+ * The picture for an "other" purchase: the item itself when Riot named it (a spray, buddy, card…), else a
+ * dimmed icon of what was spent (Kingdom Credits, an agent token), so unnamed rows still read at a glance.
+ */
+function OtherThumb({ item, currency }: { item: string | null | undefined; currency: string | null | undefined }) {
+  return (
+    <span className="relative h-11 w-11 overflow-hidden rounded-lg bg-panel-2/60">
+      {item ? <SkinImage src={item} className="absolute inset-0 h-full w-full p-1" /> : <SkinImage src={currency} className="absolute inset-0 h-full w-full p-2.5 opacity-50" />}
+    </span>
+  );
+}

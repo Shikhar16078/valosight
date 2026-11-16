@@ -50,8 +50,16 @@ export function useIntent(page: string, ready: boolean, apply: (i: Intent) => vo
   }, [page, ready]);
 }
 
-/** Smoothly scrolls a section into view (instantly under reduced motion), once it exists. */
-export function scrollToSection(id: string) {
+/**
+ * Smoothly scrolls a section into view (instantly under reduced motion), once it exists.
+ * `flash`: briefly ring the section, so it's obvious where you landed (e.g. a short table at the page bottom,
+ * which can't scroll to the top of the screen). `delay`: wait for a view switch to settle first.
+ */
+export function scrollToSection(id: string, { flash = false, delay = 0 }: { flash?: boolean; delay?: number } = {}) {
+  if (delay) {
+    setTimeout(() => scrollToSection(id, { flash }), delay);
+    return;
+  }
   const reduced = document.documentElement.dataset.motion === "reduced" || (document.documentElement.dataset.motion !== "full" && matchMedia("(prefers-reduced-motion: reduce)").matches);
   let tries = 0;
   const go = () => {
@@ -61,7 +69,17 @@ export function scrollToSection(id: string) {
       return;
     }
     // Two frames: let a filter that was just applied render first, so we land on the final layout.
-    requestAnimationFrame(() => requestAnimationFrame(() => el.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" })));
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        // A section shorter than the screen is centred; a taller one starts at the top.
+        el.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: el.offsetHeight < innerHeight * 0.7 ? "center" : "start" });
+        if (flash && !reduced)
+          el.animate(
+            [{ boxShadow: "0 0 0 2px var(--accent), 0 0 32px -6px var(--accent)" }, { boxShadow: "0 0 0 2px transparent, 0 0 32px -6px transparent" }],
+            { duration: 1800, delay: 350, easing: "cubic-bezier(0.4,0,0.2,1)" },
+          );
+      }),
+    );
   };
   go();
 }

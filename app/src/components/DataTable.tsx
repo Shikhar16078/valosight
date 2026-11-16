@@ -8,7 +8,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, Filter, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Download, Filter, Search, X } from "lucide-react";
 import { motion } from "motion/react";
 import { usePrivacy } from "../lib/privacy";
 import { AutoHeight, Collapse, Pop, SOFT, SOFT_CSS } from "./anim";
@@ -42,6 +42,11 @@ export interface Facet<T> {
   label: string;
   value: (r: T) => string | null | undefined;
   order?: (a: string, b: string) => number;
+  /**
+   * Show this filter only when it applies (e.g. Weapon only for skins), given the other filters' picks and the
+   * rows an outside `preset` leaves. Its own pick is dropped (and ignored) while it's hidden.
+   */
+  when?: (picked: Record<string, string>, rows: T[]) => boolean;
 }
 
 const ALL = 1_000_000;
@@ -104,14 +109,24 @@ export function DataTable<T>({
   useEffect(() => {
     if (sortBy) setSorting([sortBy]);
   }, [sortBy]);
-  const [picked, setPicked] = useState<Record<string, string>>({});
+  const [picked, setPickedRaw] = useState<Record<string, string>>({});
+  const presetRows = useMemo(() => (preset ? rows.filter(preset.test) : rows), [rows, preset]);
+  const applies = (fc: Facet<T>, p: Record<string, string>) => !fc.when || fc.when(p, presetRows);
+  // A filter that stops applying (its `when` turns false) hides and lets go of its pick, so nothing filters invisibly.
+  const setPicked = (next: Record<string, string> | ((p: Record<string, string>) => Record<string, string>)) =>
+    setPickedRaw((p) => {
+      const n = typeof next === "function" ? next(p) : next;
+      const out = { ...n };
+      for (const fc of facets ?? []) if (!applies(fc, out)) delete out[fc.id];
+      return out;
+    });
   // Views pass `facets` memoized (useMemo), so these recount only when the facets or rows really change, and
   // the table doesn't jump back to page 1 on every re-render.
   // Each facet's options are counted over the rows the other filters leave, so the numbers stay honest.
   const facetOptions = useMemo(
     () =>
       (facets ?? []).map((fc, _i, all) => {
-        const base = (preset ? rows.filter(preset.test) : rows).filter((r) => all.every((o) => o.id === fc.id || !picked[o.id] || (o.value(r) || "—") === picked[o.id]));
+        const base = presetRows.filter((r) => all.every((o) => o.id === fc.id || !picked[o.id] || !applies(o, picked) || (o.value(r) || "—") === picked[o.id]));
         const m = new Map<string, number>();
         for (const r of base) {
           const v = fc.value(r) || "—";
@@ -122,15 +137,15 @@ export function DataTable<T>({
         if (picked[fc.id] && !m.has(picked[fc.id])) m.set(picked[fc.id], 0);
         return { fc, opts: [...m.entries()].sort((a, b) => (fc.order ? fc.order(a[0], b[0]) : b[1] - a[1] || a[0].localeCompare(b[0]))) };
       }),
-    [facets, rows, preset, picked],
+    [facets, presetRows, picked], // eslint-disable-line react-hooks/exhaustive-deps -- applies() reads the same inputs
   );
   const facetOn = Object.values(picked).some(Boolean);
   const data = useMemo(() => {
-    let out = preset ? rows.filter(preset.test) : rows;
+    let out = presetRows;
     const fs = facets;
-    if (fs && facetOn) out = out.filter((r) => fs.every((fc) => !picked[fc.id] || (fc.value(r) || "—") === picked[fc.id]));
+    if (fs && facetOn) out = out.filter((r) => fs.every((fc) => !picked[fc.id] || !applies(fc, picked) || (fc.value(r) || "—") === picked[fc.id]));
     return out;
-  }, [rows, preset, picked, facetOn, facets]);
+  }, [presetRows, picked, facetOn, facets]); // eslint-disable-line react-hooks/exhaustive-deps
   const columns = useMemo<ColumnDef<T>[]>(
     () =>
       cols.map((c) => ({
@@ -139,10 +154,18 @@ export function DataTable<T>({
         accessorFn: (r: T) => c.value(r) ?? "",
         cell: (ctx) => (c.cell ? c.cell(ctx.row.original) : String(c.value(ctx.row.original) ?? "")),
         sortingFn: "alphanumeric",
+        // Masked columns (IPs, IDs) can't be sorted while hidden: the order would hint at the hidden values.
+        enableSorting: !(c.secret && hidden),
         meta: c,
       })),
-    [cols],
+    [cols, hidden],
   );
+  // Columns offered in the sort control: masked ones are left out while hidden (like search).
+  const sortable = useMemo(() => cols.filter((c) => !(c.secret && hidden)), [cols, hidden]);
+  // Sorted by a masked column when privacy mode comes back on: back to the table's normal order.
+  useEffect(() => {
+    if (hidden && sorting[0] && cols.find((c) => c.id === sorting[0].id)?.secret) setSorting(initialSort ? [initialSort] : []);
+  }, [hidden]); // eslint-disable-line react-hooks/exhaustive-deps
   const table = useReactTable({
     data,
     columns,
@@ -214,9 +237,9 @@ export function DataTable<T>({
           <Search size={15} className="text-faint" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder} className="w-full bg-transparent outline-none placeholder:text-faint" />
         </label>
-        {facetOptions.map(({ fc, opts }) =>
-          opts.length > 1 || picked[fc.id] ? (
-            <label key={fc.id} className={`field flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12.5px] transition-colors ${SOFT_CSS} ${picked[fc.id] ? "border-accent bg-accent-soft" : "border-line bg-panel-2"}`}>
+        {facetOptions.map(({ fc, opts }) => (
+          <Pop key={fc.id} show={(opts.length > 1 || !!picked[fc.id]) && applies(fc, picked)}>
+            <label className={`field flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12.5px] transition-colors ${SOFT_CSS} ${picked[fc.id] ? "border-accent bg-accent-soft" : "border-line bg-panel-2"}`}>
               <span className="text-muted">{fc.label}</span>
               <select value={picked[fc.id] ?? ""} onChange={(e) => setPicked((p) => ({ ...p, [fc.id]: e.target.value }))} className={`max-w-[160px] bg-transparent font-medium outline-none ${picked[fc.id] ? "text-accent" : ""}`}>
                 <option value="">All</option>
@@ -227,8 +250,8 @@ export function DataTable<T>({
                 ))}
               </select>
             </label>
-          ) : null,
-        )}
+          </Pop>
+        ))}
         <Pop show={facetOn}>
           <button type="button" onClick={() => setPicked({})} className="text-[12.5px] font-medium text-accent hover:underline">
             Clear filters
@@ -251,8 +274,12 @@ export function DataTable<T>({
           <Download size={14} /> CSV
         </button>
       </div>
-      {total > PAGE_SIZES[0] && (
+      {total > 0 && (
         <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-2 border-b border-line px-4 py-2 text-[12.5px] text-muted">
+          {/* Sorting, spelled out (clicking a column header does the same, but few people notice that). */}
+          <SortControl cols={sortable} rows={data} sorting={sorting} onChange={(id, desc) => setSorting(id ? [{ id, desc }] : [])} />
+          {total > PAGE_SIZES[0] && (
+            <>
           <label className="flex items-center gap-2">
             Rows per page
             <select
@@ -293,6 +320,8 @@ export function DataTable<T>({
               </button>
             </span>
           )}
+            </>
+          )}
         </div>
       )}
       <AutoHeight>
@@ -309,7 +338,7 @@ export function DataTable<T>({
                       key={h.id}
                       onClick={h.column.getToggleSortingHandler()}
                       style={{ width: c.width }}
-                      className={`cursor-pointer select-none whitespace-nowrap border-b border-line bg-panel-2 px-4 py-2.5 text-[11.5px] font-semibold uppercase tracking-[0.08em] text-muted hover:text-ink ${c.align === "right" ? "text-right" : "text-left"}`}
+                      className={`${h.column.getCanSort() ? "cursor-pointer hover:text-ink" : ""} select-none whitespace-nowrap border-b border-line bg-panel-2 px-4 py-2.5 text-[11.5px] font-semibold uppercase tracking-[0.08em] text-muted ${c.align === "right" ? "text-right" : "text-left"}`}
                     >
                       <span className="inline-flex items-center gap-1">
                         {flexRender(h.column.columnDef.header, h.getContext())}
@@ -372,6 +401,68 @@ export function DataTable<T>({
         </table>
       </div>
       </AutoHeight>
+    </div>
+  );
+}
+
+/** What a column holds, for the direction's wording. */
+function sortKind<T>(c: Col<T>, rows: T[]): "date" | "number" | "text" {
+  for (const r of rows.slice(0, 20)) {
+    const v = c.value(r);
+    if (v === null || v === undefined || v === "") continue;
+    if (typeof v === "number") return "number";
+    return /^\d{4}-\d{2}-\d{2}/.test(v) ? "date" : "text";
+  }
+  return "text";
+}
+const DIRECTION = {
+  date: { desc: "Newest first", asc: "Oldest first" },
+  number: { desc: "Highest first", asc: "Lowest first" },
+  text: { desc: "Z → A", asc: "A → Z" },
+};
+
+/** "Sort by [Date ▾] [↓ Newest first]": the same sort as the column headers, visible. */
+function SortControl<T>({ cols, rows, sorting, onChange }: { cols: Col<T>[]; rows: T[]; sorting: SortingState; onChange: (id: string | null, desc: boolean) => void }) {
+  const cur = sorting[0];
+  const col = cur ? cols.find((c) => c.id === cur.id) : undefined;
+  const kind = col ? sortKind(col, rows) : "text";
+  const desc = cur?.desc ?? false;
+  return (
+    <div className="mr-auto flex items-center gap-2">
+      <label className={`field flex items-center gap-1.5 rounded-lg border px-2.5 py-1 transition-colors ${SOFT_CSS} border-line bg-panel-2`}>
+        <ArrowUpDown size={13} className="text-faint" />
+        <span>Sort by</span>
+        <select
+          value={col?.id ?? ""}
+          onChange={(e) => {
+            const id = e.target.value;
+            const c = cols.find((x) => x.id === id);
+            // A new column starts the natural way round: newest / highest first, A → Z for text.
+            onChange(id || null, c ? sortKind(c, rows) !== "text" : false);
+          }}
+          className="max-w-[170px] bg-transparent font-medium text-ink outline-none"
+        >
+          {!col && <option value="">Default order</option>}
+          {cols.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.header || c.id}
+            </option>
+          ))}
+        </select>
+      </label>
+      {col && (
+        <button
+          type="button"
+          onClick={() => onChange(col.id, !desc)}
+          title="Reverse the order"
+          className={`flex items-center gap-1.5 rounded-lg border border-line bg-panel-2 px-2.5 py-1 font-medium text-ink transition-colors ${SOFT_CSS} hover:border-line-strong`}
+        >
+          <ArrowDown size={13} className={`text-muted transition-transform ${SOFT_CSS} ${desc ? "" : "rotate-180"}`} />
+          <motion.span key={`${kind}-${desc}`} initial={{ opacity: 0, y: desc ? -3 : 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: SOFT.in, ease: SOFT.ease }}>
+            {DIRECTION[kind][desc ? "desc" : "asc"]}
+          </motion.span>
+        </button>
+      )}
     </div>
   );
 }

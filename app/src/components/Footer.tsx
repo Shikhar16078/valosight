@@ -46,7 +46,12 @@ export function Footer({ go, empty }: { go: (v: string) => void; empty: boolean 
             <div className="inline-flex items-center gap-2 rounded-full border border-win/30 bg-win-soft px-3 py-1.5 text-[12.5px] text-win">
               <Lock size={13} /> Stays on this device · nothing is uploaded{offline === "ready" && " · works offline"}
             </div>
-            <p className="text-[12px] text-faint">Fan-made and unofficial. Not affiliated with Riot Games.</p>
+            <p className="text-[12px] leading-relaxed text-faint">
+              Fan-made and unofficial. {APP_NAME} was created under Riot Games' "Legal Jibber Jabber" policy using assets owned by Riot Games. Riot Games does not endorse or sponsor
+              this project, and it doesn't reflect the views of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games and all associated
+              properties are trademarks or registered trademarks of Riot Games, Inc. Game data and item pictures come from the community database valorant-api.com, loaded through this
+              site.
+            </p>
             <a href={homeUrl(settings)} className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-accent">
               {APP_NAME} home page <ArrowUpRight size={13} />
             </a>

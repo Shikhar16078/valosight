@@ -10,7 +10,7 @@ import { ALL_TZ, COMMON_TZ, makeFormatters, useSettings, type DateFmt } from "..
 import { HOME_CURRENCIES, currencySetup, useFx } from "../lib/convert";
 import { useRecords } from "../lib/account";
 import { DS, money } from "../lib/valorant";
-import { Check, Download, Globe, MonitorSmartphone, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, X } from "lucide-react";
+import { Check, Download, Globe, Image as ImageIcon, MonitorSmartphone, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, X } from "lucide-react";
 import { Card, Page, Segmented, Switch } from "../components/ui";
 import { THEMES, themeById, type Theme } from "../lib/themes";
 
@@ -41,6 +41,17 @@ export function SettingsView() {
             </>
           )}
         </p>
+      </Card>
+      <Card span={12} title="Item pictures" hint="Pictures of skins, battle-pass rewards, cards and sprays, from the community game database valorant-api.com.">
+        <div className="flex flex-wrap items-start gap-3 rounded-xl border border-line bg-panel-2/50 px-4 py-3">
+          <ImageIcon size={18} className="mt-0.5 shrink-0 text-info" />
+          <div className="min-w-0 flex-1 text-[12.5px] text-muted">
+            <div className="text-[13.5px] font-medium text-ink">Show item pictures</div>
+            Your export is never uploaded. To show your items, the app loads their pictures from Valosight's own site (never from a third party), so the site sees which pictures are asked
+            for, like any website sees the pages you open. Nothing is stored or linked to you. Turn this off and the app loads no pictures at all.
+          </div>
+          <Switch label="Show item pictures" on={settings.pictures !== false} onChange={(v) => update({ pictures: v })} />
+        </div>
       </Card>
       <Card span={6} title="Timezone" hint="Riot stores everything in UTC. Pick how times are shown.">
         <select value={settings.tz} onChange={(e) => update({ tz: e.target.value })} className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2">
