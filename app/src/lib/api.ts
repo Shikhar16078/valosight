@@ -91,14 +91,14 @@ export const api = {
   clearCache: () => recCache.clear(),
   annotations: (id: number, kind: string) => local<Record<string, string>>("annotations", [id, kind]),
   setAnnotation: (id: number, kind: string, key: string, value: string | null) => local("setAnnotations", [id, kind, { [key]: value }]),
-  setAnnotations: (id: number, kind: string, items: Record<string, string | null>) => local("setAnnotations", [id, kind, items]),
   imports: () => local<ImportInfo[]>("imports"),
   settings: () => local<Record<string, any>>("settings"),
   saveSettings: (s: Record<string, any>) => local<Record<string, any>>("saveSettings", [s]),
   fx: (bases: string[], quotes: string[]) => local<FxRates>("fx", [bases, quotes]),
   fxSync: (bases: string[], quotes: string[], start: string, force = false) => local<FxSyncResult>("fxSync", [{ bases, quotes, start, force }]),
   deleteAccount: (id: number) => local("deleteAccount", [id]),
-  upload: (files: { name: string; file: File }[], onProgress: (p: number) => void) => readAndImport(files, onProgress),
+  /** `password` opens a password-protected zip; it goes to the engine in memory only and is never stored. */
+  upload: (files: { name: string; file: File }[], onProgress: (p: number) => void, password?: string) => readAndImport(files, onProgress, password),
   /** The whole vault as one file, and putting one back. */
   backup: () => local<Blob>("backup"),
   restore: (file: File) => local<{ accounts: number }>("restore", [file]),
@@ -113,7 +113,9 @@ export interface FxSyncResult {
 }
 
 /** Read the chosen files in this tab and hand them to the engine. Nothing is uploaded anywhere. */
-async function readAndImport(files: { name: string; file: File }[], onProgress: (p: number) => void): Promise<ImportResult[]> {
+async function readAndImport(files: { name: string; file: File }[], onProgress: (p: number) => void, password?: string): Promise<ImportResult[]> {
+  // Only files the engine would read are loaded into memory (a folder can hold videos, installers…).
+  files = files.filter((f) => /\.(json|csv|zip)$/i.test(f.name));
   const total = files.reduce((n, f) => n + f.file.size, 0) || 1;
   let read = 0;
   const items: [string, ArrayBuffer][] = [];
@@ -124,5 +126,5 @@ async function readAndImport(files: { name: string; file: File }[], onProgress: 
   }
   onProgress(1);
   void (await engine()).persist();
-  return local<ImportResult[]>("import", [items], items.map(([, b]) => b));
+  return local<ImportResult[]>("import", [items, password], items.map(([, b]) => b));
 }

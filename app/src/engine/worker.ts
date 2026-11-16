@@ -3,7 +3,7 @@
  * The dashboard talks to it through engine-client.ts with {id, method, args} messages.
  */
 import * as fx from "./fx";
-import { SourceError, readUploads } from "./source";
+import { SourceError, readUploadsAsync } from "./source";
 import { Vault, VaultError } from "./vault";
 
 /** This worker's global scope (typed as a Worker: same postMessage/onmessage shape, without the webworker lib). */
@@ -35,8 +35,12 @@ const handlers: Record<string, Handler> = {
     return { ok: true };
   },
   imports: (v) => v.imports(),
-  import: async (v, items: [string, ArrayBuffer][]) => {
-    const exports = readUploads(items.map(([n, b]) => [n, new Uint8Array(b)]));
+  import: async (v, items: [string, ArrayBuffer][], password?: unknown) => {
+    // The password (for a protected zip) is only used here, in memory, and never stored.
+    const exports = await readUploadsAsync(
+      items.map(([n, b]) => [n, new Uint8Array(b)]),
+      typeof password === "string" && password ? password : undefined,
+    );
     const out = [];
     for (const e of exports) out.push(await v.importExport(e));
     return out;
