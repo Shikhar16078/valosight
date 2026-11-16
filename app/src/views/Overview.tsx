@@ -18,6 +18,10 @@ export function Overview() {
   const auditAll = useRecords(DS.audit, false);
   const pen = useRecords(DS.penalties);
   const logins = useRecords(DS.logins);
+  // Cards link to the page with more on their topic, when that page exists for this account
+  // (the same rule as the top bar: a page shows when any of its datasets has records).
+  const has = (...ds: string[]) => ds.some((d) => detail?.datasets.some((x) => x.dataset === d && x.count > 0));
+  const page = (to: string, ...ds: string[]) => (has(...ds) ? to : undefined);
 
   const created = useMemo(() => {
     const c = auditAll.all.find((r) => r.event_type === "CREATED");
@@ -74,14 +78,14 @@ export function Overview() {
   }, [games, f]);
 
   const feed = useMemo(() => {
-    const ev: { t: string; icon: ReactElement; text: string; tone: "accent" | "win" | "warn" | "info" | "neutral"; tag: string }[] = [];
-    for (const p of pay.data) ev.push({ t: p._t!, icon: <CreditCard size={14} />, text: `Paid ${money(amountPaid(p), p.currency_code, 0)} for ${Number(p.game_currency_granted).toLocaleString("en")} ${p.game_currency_type ?? ""}`, tone: "info", tag: "Payment" });
-    for (const s of classifyAllVP(store.data, store.all)) if (s.category !== "Unknown") ev.push({ t: s.t, icon: <Sparkles size={14} />, text: s.category === "Battle Pass" ? s.pass! : s.name, tone: "neutral", tag: s.category });
+    const ev: { t: string; icon: ReactElement; text: string; tone: "accent" | "win" | "warn" | "info" | "neutral"; tag: string; to: string }[] = [];
+    for (const p of pay.data) ev.push({ t: p._t!, icon: <CreditCard size={14} />, text: `Paid ${money(amountPaid(p), p.currency_code, 0)} for ${Number(p.game_currency_granted).toLocaleString("en")} ${p.game_currency_type ?? ""}`, tone: "info", tag: "Payment", to: "money" });
+    for (const s of classifyAllVP(store.data, store.all)) if (s.category !== "Unknown") ev.push({ t: s.t, icon: <Sparkles size={14} />, text: s.category === "Battle Pass" ? s.pass! : s.name, tone: "neutral", tag: s.category, to: "collection" });
     for (const a of audit.data) {
       const i = auditInfo(a);
-      if (i.level >= 1) ev.push({ t: a._t!, icon: <ShieldAlert size={14} />, text: i.label, tone: i.level === 2 ? "accent" : "warn", tag: "Security" });
+      if (i.level >= 1) ev.push({ t: a._t!, icon: <ShieldAlert size={14} />, text: i.label, tone: i.level === 2 ? "accent" : "warn", tag: "Security", to: "security" });
     }
-    for (const p of pen.data) ev.push({ t: p._t!, icon: <Gavel size={14} />, text: PENALTY[p.restriction_type] ?? p.restriction_type, tone: "warn", tag: "Penalty" });
+    for (const p of pen.data) ev.push({ t: p._t!, icon: <Gavel size={14} />, text: PENALTY[p.restriction_type] ?? p.restriction_type, tone: "warn", tag: "Penalty", to: "conduct" });
     return ev.filter((e) => e.t).sort((a, b) => b.t.localeCompare(a.t)).slice(0, 12);
   }, [pay.data, store.data, audit.data, pen.data]);
 
@@ -116,14 +120,15 @@ export function Overview() {
         value={spend[0]?.[1] ?? 0}
         format={(v) => money(v, spend[0]?.[0] ?? "USD")}
         tone="accent"
+        to={page("money", DS.payments)}
         extra={spend[0] && <ConvertedChips v={spend[0][1]} cur={spend[0][0]} items={pay.data.filter((p) => p.currency_code === spend[0][0]).map((p) => ({ v: amountPaid(p), t: p._t }))} />}
         sub={spend.length > 1 ? `+ ${spend.slice(1).map(([c, v]) => money(v, c)).join(", ")}` : `${pay.data.length} payments`}
       />
-      <Stat label="Matches played" value={games.length} sub={`${hours.toFixed(0)} hours in game`} />
-      <Stat label="Win rate" value={decided ? (wins / decided) * 100 : 0} format={(v) => `${v.toFixed(1)}%`} tone="win" sub={`${wins.toLocaleString("en")} W · ${(decided - wins).toLocaleString("en")} L`} />
-      <Stat label="Security alerts" value={alerts} tone={alerts ? "warn" : "default"} sub={`${ips} different IP addresses`} />
+      <Stat label="Matches played" to={page("matches", DS.matches)} value={games.length} sub={`${hours.toFixed(0)} hours in game`} />
+      <Stat label="Win rate" to={page("matches", DS.matches)} value={decided ? (wins / decided) * 100 : 0} format={(v) => `${v.toFixed(1)}%`} tone="win" sub={`${wins.toLocaleString("en")} W · ${(decided - wins).toLocaleString("en")} L`} />
+      <Stat label="Security alerts" to={page("security", DS.logins, DS.audit)} value={alerts} tone={alerts ? "warn" : "default"} sub={`${ips} different IP addresses`} />
 
-      <Card span={8} title="Activity" hint="Matches per month (excluding range & tutorial)">
+      <Card span={8} title="Activity" hint="Matches per month (excluding range & tutorial)" to={page("matches", DS.matches)}>
         {monthly.length ? (
           <MonthlyChart
             data={monthly}
@@ -141,25 +146,27 @@ export function Overview() {
       <Card span={4} title="Recent events" hint="Payments, purchases, security & penalties" pad={false}>
         <ul className="scroll-thin max-h-[300px] overflow-y-auto px-5 py-2">
           {feed.map((e, i) => (
-            <li key={i} className="flex gap-3 border-b border-dashed border-line py-2.5 last:border-0">
-              <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${e.tone === "accent" ? "bg-accent-soft text-accent" : e.tone === "warn" ? "bg-warn-soft text-warn" : e.tone === "info" ? "bg-info-soft text-info" : "bg-panel-2 text-muted"}`}>{e.icon}</span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">{e.text}</div>
-                <div className="num text-[12px] text-muted">
-                  {f.dateTime(e.t)} · {e.tag}
+            <li key={i} className="border-b border-dashed border-line last:border-0">
+              <a href={`#${e.to}`} title={`Open ${e.to.charAt(0).toUpperCase() + e.to.slice(1)}`} className="-mx-2 flex gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-panel-2">
+                <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${e.tone === "accent" ? "bg-accent-soft text-accent" : e.tone === "warn" ? "bg-warn-soft text-warn" : e.tone === "info" ? "bg-info-soft text-info" : "bg-panel-2 text-muted"}`}>{e.icon}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{e.text}</div>
+                  <div className="num text-[12px] text-muted">
+                    {f.dateTime(e.t)} · {e.tag}
+                  </div>
                 </div>
-              </div>
+              </a>
             </li>
           ))}
           {!feed.length && <li className="py-10 text-center text-muted">Nothing in this period.</li>}
         </ul>
       </Card>
 
-      <Card span={12} title="Play calendar" hint={`Days you played, in ${f.tzLabel}`}>
+      <Card span={12} title="Play calendar" hint={`Days you played, in ${f.tzLabel}`} to={page("matches", DS.matches)}>
         <CalendarHeatmap times={games.map((g) => g._t!).filter(Boolean)} years={years} />
       </Card>
 
-      <Card span={12} title="Collection" right={<a href="#collection" className="text-[12.5px] text-accent hover:underline">Open →</a>}>
+      <Card span={12} title="Collection" to={page("collection", DS.store)}>
         <div className="grid gap-x-8 gap-y-3 lg:grid-cols-2">
         <div className="grid grid-cols-3 content-start gap-3">
           <Tile k="Skins owned" v={coll.owned} hint="bought or upgraded" tone="accent" />
