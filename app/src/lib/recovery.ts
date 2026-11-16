@@ -44,7 +44,6 @@ export interface RecoveryData {
   matches: Rec[];
   logins: Rec[];
   audit: Rec[];
-  ipTags: Record<string, string>;
 }
 
 /** Riot's ownership questionnaire (support form wording). */
@@ -93,6 +92,13 @@ const PRODUCT: Record<string, string> = {
   "2xko": "2XKO",
 };
 
+/** How many of the oldest purchases the transaction-numbers answer starts with. */
+export const TX_DEFAULT = 10;
+/** One purchase as a line of the transaction-numbers answer. */
+export const txPaid = (p: Rec) => `${money(amountPaid(p), p.currency_code, 2)} (${n0(p.game_currency_granted)} ${p.game_currency_type ?? "VP"})`;
+/** e.g. "AB12CD34EF56 → €9.99 (1,000 VP) on MAR 14 2024" */
+export const txLine = (p: Rec) => `${p.player_facing_purchase_id} → ${txPaid(p)} on ${riotDate(p._t)}`;
+
 const isV4 = (ip?: string) => !!ip && /^\d{1,3}(\.\d{1,3}){3}$/.test(ip);
 
 export function suggest(d: RecoveryData): Record<string, Suggestion> {
@@ -112,18 +118,19 @@ export function suggest(d: RecoveryData): Record<string, Suggestion> {
   s.email = { answer: info.email ?? "", hint: "Email on the account at the time of your export" };
 
   const v4 = [...logins].reverse().filter((l) => isV4(l.ip_address));
-  const mine = v4.find((l) => d.ipTags[l.ip_address] === "mine");
-  const lastV4 = mine ?? v4[0];
+  const lastV4 = v4[0];
   s.ipv4 = {
     answer: "",
     hint: lastV4
-      ? `Check whatismyip.com for your IP right now. Last IPv4 in your export${mine ? " that you tagged as yours" : ""}: ${lastV4.ip_address} (${riotDate(lastV4._t)})`
+      ? `Check whatismyip.com for your IP right now. Last IPv4 in your export: ${lastV4.ip_address} (${riotDate(lastV4._t)})`
       : "Check whatismyip.com for your IP right now",
   };
 
   s.creator = { answer: "I created this account myself.", hint: "Pick the option that fits, or write your own" };
 
-  const emailChanges = d.audit.filter((r) => r.event_type === "USER_FIELD_CHANGED" && /email/i.test(r.description ?? "") && r.description !== "emailStatus");
+  // The first email is recorded as a "change" right after sign-up; only later ones are real changes.
+  const signUpEnd = created ? Date.parse(created) + 864e5 : -Infinity;
+  const emailChanges = d.audit.filter((r) => r.event_type === "USER_FIELD_CHANGED" && /email/i.test(r.description ?? "") && r.description !== "emailStatus" && Date.parse(r._t ?? "") > signUpEnd);
   s.allEmails = {
     answer: info.email ?? "",
     hint: emailChanges.length
@@ -177,9 +184,10 @@ export function suggest(d: RecoveryData): Record<string, Suggestion> {
   const prepaid = pays.filter((p) => /prepaid|giftcard|gift card|rp card|vp card|razer|codapay/i.test(p.payment_method ?? ""));
   s.prepaid = { answer: prepaid.length ? "" : "I did not use prepaid cards.", hint: prepaid.length ? `${prepaid.length} prepaid/gift payments in your export` : "No prepaid card payments in your export" };
 
+  // The oldest purchases are the closest to when the account was made, so they're picked by default.
   s.txIds = {
-    answer: pays.map((p) => `${p.player_facing_purchase_id} — ${riotDate(p._t)} — ${money(amountPaid(p), p.currency_code, 2)} (${n0(p.game_currency_granted)} ${p.game_currency_type ?? "VP"})`).join("\n"),
-    hint: pays.length ? `All ${pays.length} purchase IDs from your export (these match Riot's receipt emails)` : "No payments in your export",
+    answer: pays.slice(0, TX_DEFAULT).map(txLine).join("\n"),
+    hint: pays.length ? `Purchase IDs from your export (these match Riot's receipt emails). Tick the ones to include; the ${Math.min(TX_DEFAULT, pays.length)} oldest are picked to start.` : "No payments in your export",
   };
 
   const matches = d.matches.filter((m) => m._t);

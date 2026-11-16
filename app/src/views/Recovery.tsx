@@ -1,9 +1,11 @@
 import { ArrowDown, ArrowUp, Check, ClipboardCopy, FileDown, Info, Plus, RotateCcw, Trash2, Wand2 } from "lucide-react";
+import { PrivacyGate } from "../lib/privacy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAccount, useRecords } from "../lib/account";
 import { api } from "../lib/api";
-import { useAnnotations } from "../lib/annotations";
-import { freshItems, renderText, suggest, TEMPLATE, type RItem } from "../lib/recovery";
+import { freshItems, renderText, riotDate, suggest, TEMPLATE, TX_DEFAULT, txLine, txPaid, type RItem } from "../lib/recovery";
+import type { Rec } from "../lib/api";
+import { SOFT_CSS } from "../components/anim";
 import { DS } from "../lib/valorant";
 import { Badge, Card, Page, Segmented } from "../components/ui";
 
@@ -26,7 +28,7 @@ export function Recovery() {
   const mh = useRecords(DS.matches, false);
   const logins = useRecords(DS.logins, false);
   const audit = useRecords(DS.audit, false);
-  const tags = useAnnotations("ip");
+  const pays = useMemo(() => pay.all.filter((p) => p.player_facing_purchase_id).sort((a, b) => (a._t ?? "").localeCompare(b._t ?? "")), [pay.all]);
   const loadingData = pay.loading || store.loading || mh.loading || logins.loading || audit.loading;
 
   const sug = useMemo(
@@ -40,9 +42,8 @@ export function Recovery() {
         matches: mh.all,
         logins: logins.all,
         audit: audit.all,
-        ipTags: tags.map,
       }),
-    [detail, pay.all, store.all, mh.all, logins.all, audit.all, tags.map],
+    [detail, pay.all, store.all, mh.all, logins.all, audit.all],
   );
 
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -165,6 +166,7 @@ export function Recovery() {
       title="Account ownership answers"
       sub="Riot support asks these questions to confirm you own an account. Answers are pre-filled from your vault — check and edit every one, then copy or save the text for your support ticket."
     >
+      <PrivacyGate what="Ownership answers">
       <div className="panel col-span-12 flex items-start gap-3 border-warn/40 bg-warn-soft p-4 text-[13px]">
         <Info size={17} className="mt-0.5 shrink-0 text-warn" />
         <div>
@@ -275,6 +277,7 @@ export function Recovery() {
                           })}
                         </div>
                       )}
+                      {it.id === "txIds" && pays.length > 0 && <TxPicker pays={pays} answer={it.answer} onChange={(answer) => setItem(it.id, { answer })} />}
                       <AutoTextarea value={it.answer} onChange={(v) => setItem(it.id, { answer: v })} placeholder={s?.options ? "Pick an option above, or write your own…" : "Your answer…"} label="Answer" />
                       <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px]">
                         {it.answer.trim() && s?.answer && it.answer === s.answer && !s.options?.includes(it.answer.trim()) && <Badge tone="info">from your data</Badge>}
@@ -339,6 +342,7 @@ export function Recovery() {
           </div>
         </>
       )}
+      </PrivacyGate>
     </Page>
   );
 }
@@ -382,5 +386,63 @@ function AutoTextarea({ value, onChange, placeholder, className, max = 320, labe
       rows={1}
       className={className ?? "mt-1.5 block w-full resize-none rounded-lg border border-line bg-panel-2 px-3 py-2 text-[13.5px] leading-relaxed outline-none placeholder:text-faint focus:border-accent"}
     />
+  );
+}
+
+/**
+ * Pick which purchases go into the transaction-numbers answer. The answer text is the source of truth: a
+ * purchase is ticked when its ID is in it, and ticking rebuilds the answer (oldest first). Scrolls inside a
+ * fixed height, since an account can have hundreds of purchases.
+ */
+function TxPicker({ pays, answer, onChange }: { pays: Rec[]; answer: string; onChange: (answer: string) => void }) {
+  const picked = useMemo(() => new Set(pays.filter((p) => answer.includes(String(p.player_facing_purchase_id))).map((p) => p.player_facing_purchase_id)), [pays, answer]);
+  const set = (ids: Set<unknown>) => onChange(pays.filter((p) => ids.has(p.player_facing_purchase_id)).map(txLine).join("\n"));
+  const toggle = (id: unknown) => {
+    const n = new Set<unknown>(picked);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    set(n);
+  };
+  const btn = `rounded-full px-2 py-0.5 text-[12px] text-muted transition-colors ${SOFT_CSS} hover:bg-panel-2 hover:text-ink`;
+  return (
+    <div className="mt-2 rounded-lg border border-line">
+      <div className="flex flex-wrap items-center gap-1 border-b border-line px-3 py-2">
+        <span className="num mr-auto text-[12.5px]">
+          <b>{picked.size}</b>
+          <span className="text-muted"> of {pays.length} purchases picked · oldest first</span>
+        </span>
+        <button type="button" className={btn} onClick={() => set(new Set(pays.slice(0, TX_DEFAULT).map((p) => p.player_facing_purchase_id)))}>
+          Oldest {Math.min(TX_DEFAULT, pays.length)}
+        </button>
+        <button type="button" className={btn} onClick={() => set(new Set(pays.map((p) => p.player_facing_purchase_id)))}>
+          Select all
+        </button>
+        <button type="button" className={btn} onClick={() => set(new Set())}>
+          Select none
+        </button>
+      </div>
+      <ul className="scroll-thin max-h-[280px] overflow-y-auto p-1.5">
+        {pays.map((p) => {
+          const on = picked.has(p.player_facing_purchase_id);
+          return (
+            <li key={String(p.player_facing_purchase_id)}>
+              <button
+                type="button"
+                aria-pressed={on}
+                onClick={() => toggle(p.player_facing_purchase_id)}
+                className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors ${SOFT_CSS} hover:bg-panel-2 ${on ? "text-ink" : "text-muted"}`}
+              >
+                <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border transition-colors ${SOFT_CSS} ${on ? "border-accent bg-accent text-white" : "border-line-strong"}`}>
+                  <Check size={11} strokeWidth={3} className={`transition-[opacity,transform] ${SOFT_CSS} ${on ? "scale-100 opacity-100" : "scale-50 opacity-0"}`} />
+                </span>
+                <span className="num min-w-0 flex-1 truncate">{String(p.player_facing_purchase_id)}</span>
+                <span className="num shrink-0 text-faint">{riotDate(p._t)}</span>
+                <span className="num w-[150px] shrink-0 truncate text-right text-faint">{txPaid(p)}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
