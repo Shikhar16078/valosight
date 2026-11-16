@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, ComposedChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { localParts, useSettings } from "../lib/settings";
 import { useInView } from "../lib/motion";
 
@@ -153,7 +153,8 @@ export function Donut({ data, format = (v) => v.toLocaleString("en"), center }: 
   // No floating tooltip: the hovered slice is described in the ring's centre, so nothing overlaps.
   return (
     <div className="flex flex-wrap items-center gap-6">
-      <div ref={ref} className="relative h-[180px] w-[180px] shrink-0">
+      {/* Clear the hover only when leaving the ring, not in the gaps between slices (that made the centre flicker). */}
+      <div ref={ref} className="relative h-[180px] w-[180px] shrink-0" onMouseLeave={() => setHover(null)}>
         {seen && (
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -171,26 +172,47 @@ export function Donut({ data, format = (v) => v.toLocaleString("en"), center }: 
               animationDuration={800}
               animationEasing="ease-out"
               onMouseEnter={(_, i) => setHover(i)}
-              onMouseLeave={() => setHover(null)}
             >
               {data.map((_, i) => (
-                <Cell key={i} fill={SERIES[i % SERIES.length]} opacity={hover == null || hover === i ? 1 : 0.3} style={{ transition: "opacity .15s", outline: "none" }} />
+                <Cell
+                  key={i}
+                  fill={SERIES[i % SERIES.length]}
+                  opacity={hover == null || hover === i ? 1 : 0.3}
+                  style={{
+                    // The hovered slice eases outward from the ring's centre; the others fade back.
+                    transformBox: "view-box",
+                    transformOrigin: "50% 50%",
+                    transform: hover === i ? "scale(1.07)" : "scale(1)",
+                    transition: anim ? "transform .35s cubic-bezier(0.22,1,0.36,1), opacity .3s ease" : "none",
+                    outline: "none",
+                  }}
+                />
               ))}
             </Pie>
           </PieChart>
         </ResponsiveContainer>
         )}
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
-          {h ? (
-            <>
-              <div className="num text-lg font-medium leading-tight">{format(h.value)}</div>
-              <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-tight text-muted">
-                {h.label} · {pct(h.value)}%
-              </div>
-            </>
-          ) : (
-            center
-          )}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={hover ?? "center"}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.16, ease: "easeOut" }}
+            >
+              {h ? (
+                <>
+                  <div className="num text-lg font-medium leading-tight">{format(h.value)}</div>
+                  <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-tight text-muted">
+                    {h.label} · {pct(h.value)}%
+                  </div>
+                </>
+              ) : (
+                center
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
       </div>
       <ul className="min-w-[180px] flex-1 space-y-0.5">
@@ -199,7 +221,7 @@ export function Donut({ data, format = (v) => v.toLocaleString("en"), center }: 
             key={d.label}
             onMouseEnter={() => setHover(i)}
             onMouseLeave={() => setHover(null)}
-            className={`flex items-center justify-between gap-3 rounded-md px-2 py-1 text-[13px] transition-colors ${hover === i ? "bg-panel-2" : ""}`}
+            className={`flex items-center justify-between gap-3 rounded-md px-2 py-1 text-[13px] transition-[background-color,opacity] duration-300 ${hover === i ? "bg-panel-2" : ""} ${hover != null && hover !== i ? "opacity-50" : ""}`}
           >
             <span className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-sm" style={{ background: SERIES[i % SERIES.length] }} />
