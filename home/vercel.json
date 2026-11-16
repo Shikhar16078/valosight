@@ -3,7 +3,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm ci",
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ../app/src/tokens.css ../app/src/lib/themes.ts",
+  "ignoreCommand": "git rev-parse -q --verify HEAD^ >/dev/null && git diff --quiet HEAD^ HEAD -- . ../app/src/tokens.css ../app/src/lib/themes.ts",
   "headers": [
     {
       "source": "/(.*)",
