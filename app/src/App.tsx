@@ -1,0 +1,502 @@
+import { AnimatePresence, MotionConfig, motion, useScroll, useSpring } from "motion/react";
+import { APP_NAME, Logo, Wordmark } from "./components/Logo";
+import { CalendarRange, Check, ChevronDown, Database, FlaskConical, Gavel, LayoutDashboard, LifeBuoy, Settings, Users, Shield, Sparkles, Swords, Upload, Wallet } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AccountProvider, useAccount, type Range } from "./lib/account";
+import { SettingsProvider, useSettings } from "./lib/settings";
+import { DS } from "./lib/valorant";
+import { EASE_EMPH } from "./lib/motion";
+import { Loading } from "./components/ui";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { Ambient } from "./components/Ambient";
+import { Footer } from "./components/Footer";
+import { FxProvider } from "./lib/convert";
+import { api } from "./lib/api";
+import { demoTarget, isDemoAccount, loadDemo } from "./lib/demo";
+import { Overview } from "./views/Overview";
+import { Money } from "./views/Money";
+import { Collection } from "./views/Collection";
+import { Matches } from "./views/Matches";
+import { Security } from "./views/Security";
+import { Conduct } from "./views/Conduct";
+import { DataBrowser } from "./views/DataBrowser";
+import { Imports } from "./views/Imports";
+import { SettingsView } from "./views/SettingsView";
+import { Recovery } from "./views/Recovery";
+import { AllAccounts } from "./views/AllAccounts";
+
+type ViewId = "overview" | "money" | "collection" | "matches" | "security" | "conduct" | "data" | "recovery" | "accounts" | "import" | "settings";
+type Group = "Insights" | "Tools" | "Account recovery" | "App";
+const NAV: { id: ViewId; label: string; icon: ReactNode; group: Group; needs?: string[] }[] = [
+  { id: "overview", label: "Overview", icon: <LayoutDashboard size={17} />, group: "Insights" },
+  { id: "money", label: "Money", icon: <Wallet size={17} />, group: "Insights", needs: [DS.payments] },
+  { id: "collection", label: "Collection", icon: <Sparkles size={17} />, group: "Insights", needs: [DS.store] },
+  { id: "matches", label: "Matches", icon: <Swords size={17} />, group: "Insights", needs: [DS.matches] },
+  { id: "security", label: "Security", icon: <Shield size={17} />, group: "Insights", needs: [DS.logins, DS.audit] },
+  { id: "conduct", label: "Conduct", icon: <Gavel size={17} />, group: "Insights", needs: [DS.penalties, DS.vReports, DS.lolReports, DS.tftReports] },
+  { id: "data", label: "Raw data", icon: <Database size={17} />, group: "Tools" },
+  { id: "accounts", label: "All accounts", icon: <Users size={17} />, group: "Tools" },
+  { id: "recovery", label: "Ownership answers", icon: <LifeBuoy size={17} />, group: "Account recovery" },
+  { id: "import", label: "Import data", icon: <Upload size={17} />, group: "App" },
+  { id: "settings", label: "Settings", icon: <Settings size={17} />, group: "App" },
+];
+/** Pages where the period filter does nothing, so the top bar hides it. */
+const NO_SCOPE: ViewId[] = ["import", "settings", "recovery", "accounts"];
+const STALE_DAYS = 30;
+
+function useHashView(): [ViewId, (v: ViewId) => void] {
+  const read = () => (window.location.hash.slice(1) as ViewId) || "overview";
+  const [v, setV] = useState<ViewId>(read);
+  useEffect(() => {
+    const on = () => setV(read());
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  return [v, (n) => (window.location.hash = n)];
+}
+
+function useClickAway<T extends HTMLElement>(open: boolean, close: () => void) {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && close();
+    const k = (e: KeyboardEvent) => e.key === "Escape" && close();
+    document.addEventListener("mousedown", h);
+    document.addEventListener("keydown", k);
+    return () => {
+      document.removeEventListener("mousedown", h);
+      document.removeEventListener("keydown", k);
+    };
+  }, [open, close]);
+  return ref;
+}
+
+function AccountSwitcher({ go }: { go: (v: ViewId) => void }) {
+  const { accounts, accountId, setAccountId } = useAccount();
+  const { f } = useSettings();
+  const [open, setOpen] = useState(false);
+  const ref = useClickAway<HTMLDivElement>(open, () => setOpen(false));
+  const cur = accounts.find((a) => a.id === accountId);
+  const initials = (s: string) => s.replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase();
+  const name = cur?.game_name ?? cur?.username ?? "No account";
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Account: ${name}. Switch account`}
+        title={`${name} · ${accounts.length} account${accounts.length === 1 ? "" : "s"}`}
+        className={`group relative flex h-9 w-9 items-center justify-center rounded-full p-[2px] transition-transform duration-200 hover:scale-105 ${open ? "bg-[linear-gradient(135deg,var(--accent),var(--violet))]" : "bg-line-strong hover:bg-[linear-gradient(135deg,var(--accent),var(--violet))]"}`}
+      >
+        <span className="flex h-full w-full items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--accent),var(--violet))] font-display text-[12px] font-bold text-white ring-2 ring-[var(--bg)]">
+          {initials(name)}
+        </span>
+        {accounts.length > 1 && (
+          <span className="num absolute -bottom-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-line bg-panel-3 px-1 text-[9.5px] font-semibold text-ink">
+            {accounts.length}
+          </span>
+        )}
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.15 }} className="pop absolute right-0 top-full z-50 mt-2 w-[290px] overflow-hidden p-1">
+            <div className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted">Your accounts</div>
+            {accounts.map((a) => (
+              <button
+                key={a.id}
+                onClick={() => {
+                  setAccountId(a.id);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-panel-2"
+              >
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-panel-2 font-display text-[12px] font-bold">{initials(a.game_name ?? a.username)}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">
+                    {a.game_name ?? a.username}
+                    {a.tagline && <span className="text-muted">#{a.tagline}</span>}
+                  </span>
+                  <span className="num block text-[11.5px] text-muted">data to {f.date(a.data_until)}</span>
+                </span>
+                {a.id === accountId && <Check size={15} className="text-accent" />}
+              </button>
+            ))}
+            {accounts.length > 1 && (
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  go("accounts");
+                }}
+                className="mt-1 flex w-full items-center gap-2 rounded-lg border-t border-line px-3 py-2 text-left text-[13px] hover:bg-panel-2"
+              >
+                <Users size={14} /> Compare all accounts
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setOpen(false);
+                go("import");
+              }}
+              className="mt-1 flex w-full items-center gap-2 rounded-lg border-t border-line px-3 py-2 text-left text-[13px] text-accent hover:bg-panel-2"
+            >
+              <Upload size={14} /> Add or update an account
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function useScrolled(px = 8) {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const f = () => setOn(window.scrollY > px);
+    f();
+    window.addEventListener("scroll", f, { passive: true });
+    return () => window.removeEventListener("scroll", f);
+  }, [px]);
+  return on;
+}
+
+const PERIODS = [
+  { v: "all", label: "All time" },
+  { v: "d30", label: "Last 30 days" },
+  { v: "d90", label: "Last 90 days" },
+  { v: "d365", label: "Last 12 months" },
+];
+
+/** The period filter as one pill; timezone and clock live in Settings. */
+function ScopePill() {
+  const { range, setRange, years } = useAccount();
+  const [open, setOpen] = useState(false);
+  const ref = useClickAway<HTMLDivElement>(open, () => setOpen(false));
+  const val = range.kind === "all" ? "all" : range.kind === "year" ? `y${range.y}` : `d${range.days}`;
+  const set = (v: string) => setRange((v === "all" ? { kind: "all" } : v[0] === "y" ? { kind: "year", y: +v.slice(1) } : { kind: "last", days: +v.slice(1) }) as Range);
+  const label = PERIODS.find((p) => p.v === val)?.label ?? val.slice(1);
+  const chip = (on: boolean) => `num rounded-full border px-2.5 py-1 text-[12.5px] ${on ? "border-accent bg-accent-soft font-medium text-accent" : "border-line text-muted hover:border-line-strong hover:text-ink"}`;
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className={`flex h-8 items-center gap-2 rounded-full border px-3 text-[13px] ${val !== "all" ? "border-accent/50 bg-accent-soft" : "border-line bg-panel-2 hover:border-line-strong hover:bg-panel-3"}`}
+      >
+        <CalendarRange size={14} className={val !== "all" ? "text-accent" : "text-muted"} />
+        <span className="font-medium">{label}</span>
+        <ChevronDown size={14} className={`text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="dialog"
+            aria-label="Period"
+            initial={{ opacity: 0, y: -4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.98 }}
+            transition={{ duration: 0.16, ease: EASE_EMPH }}
+            className="pop absolute right-0 top-full z-50 mt-2 w-[300px] origin-top-right space-y-3 p-3"
+          >
+            <div>
+              <div className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">Period</div>
+              <div className="flex flex-wrap gap-1.5">
+                {PERIODS.map((p) => (
+                  <button key={p.v} aria-pressed={val === p.v} onClick={() => set(p.v)} className={chip(val === p.v)}>
+                    {p.label}
+                  </button>
+                ))}
+                {years.map((y) => (
+                  <button key={y} aria-pressed={val === `y${y}`} onClick={() => set(`y${y}`)} className={chip(val === `y${y}`)}>
+                    {y}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Pulsing dot: how fresh this account's data is. Turns amber once the newest record is a month old. */
+function Freshness() {
+  const { accounts, accountId, detail } = useAccount();
+  const { f } = useSettings();
+  const until = accounts.find((a) => a.id === accountId)?.data_until;
+  if (!until || !detail) return null;
+  const days = Math.floor((Date.now() - Date.parse(until)) / 864e5);
+  const stale = days > STALE_DAYS;
+  const tone = stale ? "bg-warn" : "bg-win";
+  const dot = (
+    <span className="relative flex h-2.5 w-2.5">
+      {!stale && <span className={`absolute inline-flex h-full w-full animate-[ping_2.4s_cubic-bezier(0,0,0.2,1)_infinite] rounded-full opacity-50 ${tone}`} />}
+      <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${tone}`} />
+    </span>
+  );
+  return (
+    <div className="group relative flex">
+      <span
+        tabIndex={0}
+        role="status"
+        aria-label={stale ? `Data is ${days} days old` : `Data up to ${f.date(until)}`}
+        className={`flex h-8 cursor-help items-center gap-2 rounded-full ${stale ? "border border-warn/40 bg-warn-soft px-2.5 text-[12.5px] text-warn" : "w-8 justify-center hover:bg-panel-2"}`}
+      >
+        {dot}
+        {stale && <span className="hidden sm:inline">{days} days old</span>}
+      </span>
+      <div className="pop pointer-events-none absolute right-0 top-full z-50 mt-2 w-max max-w-[260px] translate-y-1 px-3 py-2 text-[12.5px] opacity-0 transition-[opacity,transform] duration-200 group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:translate-y-0 group-hover:opacity-100">
+        <div className="font-medium">{stale ? "Your data is getting old" : "Data is fresh"}</div>
+        <div className="text-muted">
+          Newest record <span className="num text-ink">{f.date(until)}</span> · imported {f.relative(detail.imports[0]?.imported_at)}
+        </div>
+        {stale && <div className="mt-1 text-warn">Request a new export from Riot and import it.</div>}
+      </div>
+    </div>
+  );
+}
+
+function IconNav({ items, view, go, className }: { items: typeof NAV; view: ViewId; go: (v: ViewId) => void; className: string }) {
+  // Which icon is pointed at (or keyboard-focused): its name shows in a pill that glides between icons.
+  const [tip, setTip] = useState<ViewId | null>(null);
+  return (
+    <nav aria-label="Pages" className={`scroll-thin min-w-0 items-center gap-0.5 overflow-x-auto md:overflow-visible ${className}`} onPointerLeave={() => setTip(null)}>
+      {items.map((n, i) => (
+        <span key={n.id} className="flex items-center">
+          {i > 0 && items[i - 1].group !== n.group && <span className="mx-1 h-5 w-px shrink-0 bg-line" aria-hidden />}
+          <button
+            onClick={() => go(n.id)}
+            onPointerEnter={(e) => e.pointerType === "mouse" && setTip(n.id)}
+            onFocus={(e) => e.currentTarget.matches(":focus-visible") && setTip(n.id)}
+            onBlur={() => setTip(null)}
+            aria-label={n.label}
+            aria-current={view === n.id ? "page" : undefined}
+            className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${view === n.id ? "text-accent" : n.group === "Account recovery" ? "text-warn hover:bg-panel-2" : "text-muted hover:bg-panel-2 hover:text-ink"}`}
+          >
+            {view === n.id && (
+              <motion.span layoutId="topnav-active" className="absolute inset-0 rounded-lg bg-accent-soft ring-1 ring-accent/30" transition={{ type: "spring", stiffness: 500, damping: 40 }} />
+            )}
+            <motion.span className="relative" animate={{ y: tip === n.id ? -1 : 0, scale: tip === n.id ? 1.12 : 1 }} transition={{ type: "spring", stiffness: 500, damping: 22 }}>
+              {n.icon}
+            </motion.span>
+            <span aria-hidden className="pointer-events-none absolute inset-x-[-60px] top-full z-40 mt-2 flex justify-center">
+              <AnimatePresence>
+                {tip === n.id && (
+                  <motion.span
+                    layoutId="topnav-tip"
+                    initial={{ opacity: 0, y: -4, scale: 0.92 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -4, scale: 0.92, transition: { duration: 0.12 } }}
+                    transition={{ type: "spring", stiffness: 520, damping: 34 }}
+                    className={`pop whitespace-nowrap px-2.5 py-1 text-[12px] font-medium ${n.group === "Account recovery" ? "text-warn" : "text-ink"}`}
+                  >
+                    {n.label}
+                    <span className="ml-1.5 text-faint">{n.group === "Account recovery" ? "" : n.group}</span>
+                  </motion.span>
+                )}
+              </AnimatePresence>
+            </span>
+          </button>
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+/** The app's only navigation: logo + account on the left, pages in the middle, data scope on the right. */
+function TopBar({ view, items, go, empty }: { view: ViewId; items: typeof NAV; go: (v: ViewId) => void; empty: boolean }) {
+  const scrolled = useScrolled();
+  return (
+    <div
+      className={`sticky top-0 z-30 bg-[color-mix(in_oklab,var(--bg)_72%,transparent)] backdrop-blur-xl backdrop-saturate-150 transition-shadow duration-300 ${scrolled ? "shadow-[0_10px_30px_-18px_rgb(0_0_0/0.6)]" : ""}`}
+    >
+      <div className="mx-auto grid h-14 max-w-[1400px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-4 sm:px-8">
+        <div className="flex min-w-0 items-center gap-3">
+          <button onClick={() => go(empty ? "import" : "overview")} className="flex shrink-0 items-center gap-2 rounded-lg" aria-label={`${APP_NAME} home`}>
+            <Logo />
+            <Wordmark by className="hidden text-[15px] xl:inline-flex" />
+          </button>
+        </div>
+        <div className="flex min-w-0 justify-center">
+          <IconNav items={items} view={view} go={go} className="flex" />
+        </div>
+        <div className="flex min-w-0 items-center justify-end gap-2">
+          {!empty && <Freshness />}
+          {!empty && !NO_SCOPE.includes(view) && <ScopePill />}
+          {!empty && <AccountSwitcher go={go} />}
+        </div>
+      </div>
+      <div className="relative h-px bg-[linear-gradient(90deg,transparent,var(--line-strong)_20%,var(--line-strong)_80%,transparent)]">
+        <ScrollProgress />
+      </div>
+    </div>
+  );
+}
+
+/** How far down the page you are: a thin glowing line under the top bar. */
+function ScrollProgress() {
+  const { scrollYProgress } = useScroll();
+  const x = useSpring(scrollYProgress, { stiffness: 200, damping: 30, restDelta: 0.001 });
+  return (
+    <motion.div
+      aria-hidden
+      className="absolute inset-x-0 -top-px h-[2px] origin-left bg-[linear-gradient(90deg,var(--accent),var(--violet))] shadow-[0_0_10px_var(--accent)]"
+      style={{ scaleX: x }}
+    />
+  );
+}
+
+function Shell() {
+  const { accounts, accountId, loading, error, has, setAccountId, refresh } = useAccount();
+  const [view, go] = useHashView();
+  const [demo, setDemo] = useState<{ busy: boolean; error?: string }>({ busy: false });
+
+  // #demo (or #demo:<page>) loads the made-up demo player and opens it.
+  useEffect(() => {
+    const target = demoTarget();
+    if (loading || !target || demo.busy) return;
+    setDemo({ busy: true });
+    loadDemo(accounts)
+      .then(async (id) => {
+        await refresh();
+        setAccountId(id);
+        setDemo({ busy: false });
+        go((NAV.some((n) => n.id === target) ? target : "overview") as ViewId);
+      })
+      .catch((e: Error) => {
+        setDemo({ busy: false, error: e.message });
+        go("import");
+      });
+  }, [view, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [view]);
+
+  if (loading || demo.busy)
+    return (
+      <>
+        {demo.busy && <div className="pt-10 text-center font-display text-lg text-muted">Loading the demo player…</div>}
+        <Loading />
+      </>
+    );
+  if (error && !accounts.length)
+    return (
+      <div className="flex min-h-screen items-center justify-center p-8 text-center">
+        <div>
+          <div className="font-display text-2xl font-semibold">{APP_NAME} couldn't start</div>
+          <p className="mt-2 text-muted">{error}</p>
+        </div>
+      </div>
+    );
+
+  const noAccounts = accounts.length === 0;
+  const current = accounts.find((a) => a.id === accountId);
+  const removeDemo = async () => {
+    if (!current) return;
+    await api.deleteAccount(current.id);
+    await refresh();
+    go(accounts.length > 1 ? "overview" : "import");
+  };
+  const effective: ViewId = noAccounts && view !== "settings" ? "import" : view;
+  const visible = NAV.filter((n) => !n.needs || n.needs.some(has));
+  const topItems = visible.filter((n) => n.id !== "accounts" || accounts.length > 1);
+  const page = {
+    overview: <Overview />,
+    money: <Money />,
+    collection: <Collection />,
+    matches: <Matches />,
+    security: <Security />,
+    conduct: <Conduct />,
+    data: <DataBrowser />,
+    import: (
+      <Imports
+        onImported={(id) => {
+          setAccountId(id);
+          go("overview");
+        }}
+      />
+    ),
+    settings: <SettingsView />,
+    recovery: <Recovery />,
+    accounts: (
+      <AllAccounts
+        open={(id) => {
+          setAccountId(id);
+          go("overview");
+        }}
+      />
+    ),
+  }[effective] ?? <Overview />;
+
+  return (
+    <div className="min-h-screen">
+      <Ambient />
+      <main className="min-w-0">
+        <TopBar view={effective} items={noAccounts ? NAV.filter((n) => n.group === "App") : topItems} go={go} empty={noAccounts} />
+        {isDemoAccount(current) && (
+          <div className="mx-auto max-w-[1400px] px-4 pt-4 sm:px-8">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-info/30 bg-info-soft px-4 py-2.5 text-[13px]">
+              <FlaskConical size={16} className="shrink-0 text-info" />
+              <span className="min-w-0 flex-1">
+                You're exploring <b>Demo Player#DEMO</b>, a made-up account. Nothing here is real data.
+              </span>
+              <button onClick={() => go("import")} className="rounded-md border border-line-strong px-2.5 py-1 font-medium hover:border-accent hover:text-accent">
+                Use my own export
+              </button>
+              <button onClick={removeDemo} className="rounded-md px-2.5 py-1 text-muted hover:text-loss">
+                Remove demo
+              </button>
+            </div>
+          </div>
+        )}
+        {/* Enter-only page transition: no exit animation to wait for between pages. */}
+        <motion.div key={effective} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease: EASE_EMPH }}>
+            {noAccounts && effective === "import" && (
+              <div className="mx-auto max-w-[1400px] px-4 pt-10 sm:px-8">
+                <div className="panel corner p-6">
+                  <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-accent">Welcome</div>
+                  <h1 className="mt-1 font-display text-3xl font-bold">Turn your Riot data export into a dashboard</h1>
+                  <ol className="mt-3 list-decimal space-y-1 pl-5 text-muted">
+                    <li>Request your data from Riot (privacy / data request on Riot's support site) and download the .zip they email you.</li>
+                    <li>Drop it below. Add more accounts the same way.</li>
+                    <li>When you request a newer export later, import it too — only new records are added.</li>
+                  </ol>
+                  <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">
+                    <button onClick={() => go("demo" as ViewId)} className="inline-flex items-center gap-2 rounded-lg border border-line-strong px-4 py-2 font-medium hover:border-accent hover:text-accent">
+                      <FlaskConical size={16} /> Try it with a demo player
+                    </button>
+                    <span className="text-[13px] text-muted">No export yet? Riot can take up to 30 days. Explore a made-up account first.</span>
+                    {demo.error && <span className="w-full text-[13px] text-loss">{demo.error}</span>}
+                  </div>
+                </div>
+              </div>
+            )}
+            <ErrorBoundary key={`${effective}:${accountId}`}>{page}</ErrorBoundary>
+        </motion.div>
+        <Footer go={(v) => go(v as ViewId)} empty={noAccounts} />
+      </main>
+    </div>
+  );
+}
+
+/** Respects the OS reduce-motion setting, or turns motion off entirely from Settings. */
+function MotionRoot({ children }: { children: ReactNode }) {
+  const { settings } = useSettings();
+  return <MotionConfig reducedMotion={settings.motion === "reduced" ? "always" : "user"}>{children}</MotionConfig>;
+}
+
+export default function App() {
+  return (
+    <SettingsProvider>
+      <MotionRoot>
+        <AccountProvider>
+          <FxProvider>
+            <Shell />
+          </FxProvider>
+        </AccountProvider>
+      </MotionRoot>
+    </SettingsProvider>
+  );
+}

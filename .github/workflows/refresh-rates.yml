@@ -1,0 +1,23 @@
+# Rebuilds the web app once a day so its published exchange rates stay current.
+# The build (npm run build:web) downloads the rates; this only asks Vercel to run it.
+# Setup: Vercel project → Settings → Git → Deploy Hooks → create one for the production branch,
+# then add its URL here as the repository secret VERCEL_DEPLOY_HOOK.
+name: Refresh exchange rates
+
+on:
+  schedule:
+    - cron: "30 16 * * 1-5" # 16:30 UTC on weekdays, after the ECB publishes (~16:00 CET)
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger a production build on Vercel
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then echo "VERCEL_DEPLOY_HOOK is not set; nothing to do."; exit 0; fi
+          curl --fail --silent --show-error -X POST "$HOOK" > /dev/null

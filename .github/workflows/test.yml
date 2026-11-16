@@ -1,0 +1,39 @@
+# Engine tests, typecheck and builds on every push and pull request (synthetic and fabricated demo data only).
+name: Tests
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            home/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Demo export is up to date
+        run: |
+          python test/demo-export/make_demo_export.py --out /tmp/demo.zip
+          python -c "import zipfile,sys; a,b=(zipfile.ZipFile(f) for f in sys.argv[1:]); n=sorted(a.namelist()); sys.exit(0 if n==sorted(b.namelist()) and all(a.read(x)==b.read(x) for x in n) else 'demo export is out of date: re-run make_demo_export.py')" /tmp/demo.zip test/demo-export/Demo_Player-DEMO.zip
+      - name: App engine tests, typecheck and build
+        working-directory: app
+        run: |
+          npm ci
+          npm test
+          npx tsc -b
+          npx vite build
+      - name: Home page typecheck and build
+        working-directory: home
+        run: |
+          npm ci
+          npm run build
