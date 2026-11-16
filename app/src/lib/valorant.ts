@@ -93,15 +93,15 @@ export const n0 = (v: number) => Math.round(v).toLocaleString("en");
 
 const WEAPONS = [
   "Classic", "Shorty", "Frenzy", "Ghost", "Sheriff", "Bandit", "Stinger", "Spectre", "Bucky", "Judge",
-  "Bulldog", "Guardian", "Phantom", "Vandal", "Marshal", "Outlaw", "Operator", "Ares", "Odin",
+  "Bulldog", "Guardian", "Warden", "Phantom", "Vandal", "Marshal", "Outlaw", "Operator", "Ares", "Odin",
 ];
 const MELEE_WORDS = /(knife|karambit|blade|axe|sword|yaiba|dagger|kunai|fan|hammer|bat|katana|melee|baton|claw|scythe|mace|staff|wrench|daggers|cleaver|tanto|bayonet)/i;
-/** VALORANT's weapon classes, in buy-menu order (Bandit: sidearm added in 2026). */
+/** VALORANT's weapon classes, in buy-menu order (Bandit: sidearm added in 2026; Warden: rifle). */
 export const WEAPON_CLASSES: { name: string; weapons: string[] }[] = [
   { name: "Sidearms", weapons: ["Classic", "Shorty", "Frenzy", "Ghost", "Bandit", "Sheriff"] },
   { name: "SMGs", weapons: ["Stinger", "Spectre"] },
   { name: "Shotguns", weapons: ["Bucky", "Judge"] },
-  { name: "Rifles", weapons: ["Bulldog", "Guardian", "Phantom", "Vandal"] },
+  { name: "Rifles", weapons: ["Bulldog", "Guardian", "Warden", "Phantom", "Vandal"] },
   { name: "Sniper rifles", weapons: ["Marshal", "Outlaw", "Operator"] },
   { name: "Machine guns", weapons: ["Ares", "Odin"] },
   { name: "Melee", weapons: ["Melee"] },

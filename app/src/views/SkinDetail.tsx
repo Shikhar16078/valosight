@@ -65,7 +65,9 @@ export function useSkinModel({ match, upgrades, catalog, owned, picture }: SkinD
 
   const family = useMemo<CatalogSkin[]>(() => (skin?.theme && catalog ? catalog.skins.filter((s) => s.theme === skin.theme) : []), [skin, catalog]);
   const ownedInFamily = family.filter((s) => owned.has(s.name)).length;
-  return { skin, date, levelAt, variantAt, topLevel, pick, setPick, chroma, tint, image, family, ownedInFamily };
+  // A bundle's art (a 16:9 scene, not a weapon render on transparency): shown framed on its own blurred colours.
+  const art = !skin && !match?.image && !!picture;
+  return { skin, date, levelAt, variantAt, topLevel, pick, setPick, chroma, tint, image, art, family, ownedInFamily };
 }
 export type SkinModel = ReturnType<typeof useSkinModel>;
 
@@ -84,7 +86,21 @@ export function SkinHero({ m, className = "" }: { m: SkinModel; className?: stri
       }}
     >
       <Swap k={m.image ?? "none"} appear className="absolute inset-0 grid place-items-center p-4">
-        {m.image ? <SkinImage src={m.image} className="absolute inset-[8%] h-[84%] w-[84%]" /> : <span className="text-[12.5px] text-faint">No picture</span>}
+        {m.image && m.art ? (
+          <>
+            {/* The art's own colours fill the box (blurred, dimmed), and the art sits on them as a framed picture,
+                so the rectangle blends in instead of floating on an empty box. Same file: one download. */}
+            <SkinImage src={m.image} size="lg" fit="cover" className="absolute inset-0 h-full w-full scale-125 opacity-55 blur-2xl saturate-150" />
+            <span aria-hidden className="absolute inset-0 bg-[radial-gradient(80%_70%_at_50%_50%,transparent,color-mix(in_oklab,var(--bg)_55%,transparent))]" />
+            <div className="absolute inset-[7%] grid place-items-center">
+              <SkinImage src={m.image} size="lg" className="max-h-full max-w-full rounded-xl shadow-[0_18px_50px_-12px_rgba(0,0,0,0.65)] ring-1 ring-white/10" />
+            </div>
+          </>
+        ) : m.image ? (
+          <SkinImage src={m.image} size="lg" className="absolute inset-[8%] h-[84%] w-[84%]" />
+        ) : (
+          <span className="text-[12.5px] text-faint">No picture</span>
+        )}
       </Swap>
     </div>
   );
@@ -110,7 +126,7 @@ export function SkinVariants({ m, p, className = "", big = false }: { m: SkinMod
               title={c.label || "Base"}
               className={`relative grid ${size} place-items-center overflow-hidden border transition-[border-color,box-shadow,transform] ${SOFT_CSS} ${pick === i ? "border-accent shadow-[0_0_0_2px_var(--accent)]" : "border-line hover:-translate-y-0.5 hover:border-line-strong"} ${have ? "" : "opacity-50"}`}
             >
-              {c.swatch ? <SkinImage src={c.swatch} className="absolute inset-0 h-full w-full" /> : <span className="text-[11px] text-muted">Base</span>}
+              {c.swatch ? <SkinImage src={c.swatch} size="xs" className="absolute inset-0 h-full w-full" /> : <span className="text-[11px] text-muted">Base</span>}
               {have && (
                 <span className="absolute bottom-0.5 right-0.5 grid h-3.5 w-3.5 place-items-center rounded-full bg-win text-[var(--bg)]">
                   <Check size={9} strokeWidth={3.5} />
@@ -177,7 +193,7 @@ export function SkinBadges({ m, p }: { m: SkinModel; p: SkinDetailProps }) {
     <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
       {skin?.edition ? (
         <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-medium" style={{ borderColor: `${skin.edition.color ?? "#888"}66`, color: skin.edition.color ?? undefined }}>
-          {skin.edition.icon && <SkinImage src={skin.edition.icon} className="h-3.5 w-3.5" />}
+          {skin.edition.icon && <SkinImage src={skin.edition.icon} size="xs" className="h-3.5 w-3.5" />}
           {skin.edition.name}
         </span>
       ) : (
@@ -234,7 +250,7 @@ export function SkinFamily({ m, p }: { m: SkinModel; p: SkinDetailProps }) {
                 onClick={() => p.onOpen(s.name)}
                 className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] transition-colors ${SOFT_CSS} ${have ? YOURS : "text-muted"} ${have && !self ? YOURS_HOVER : ""}`}
               >
-                <SkinImage src={s.image} className={`h-7 w-16 shrink-0 ${have ? "" : "opacity-40 grayscale"}`} />
+                <SkinImage src={s.image} size="sm" className={`h-7 w-16 shrink-0 ${have ? "" : "opacity-40 grayscale"}`} />
                 <span className="min-w-0 flex-1 truncate">{s.name}</span>
                 {have ? <Badge tone="win">{self ? "this one" : "owned"}</Badge> : <span className="text-[12px] text-faint">{s.edition?.name ?? ""}</span>}
               </button>

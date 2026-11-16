@@ -8,9 +8,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "shots": "node scripts/screenshots.mjs"
+    "shots": "node scripts/screenshots.mjs",
+    "shots:webp": "node scripts/screenshots.mjs --webp-only"
   },
   "devDependencies": {
+    "sharp": "0.35.5",
     "typescript": "^5.9.3",
     "vite": "^8.3.8"
   },

@@ -52,6 +52,9 @@ img {
   height: auto;
   display: block;
 }
+picture {
+  display: block;
+}
 a {
   color: var(--accent);
   text-decoration-thickness: 1px;

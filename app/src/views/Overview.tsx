@@ -318,7 +318,7 @@ export function Overview() {
               {latestSkins.map((s) => (
                 <li key={s.r.transaction_id}>
                   <button type="button" disabled={!toColl} onClick={() => goTo("collection", { filter: "skin", value: s.name })} title={`Show ${s.name}`} className="-mx-2 flex w-[calc(100%+1rem)] items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-panel-2">
-                    {cat && <SkinImage src={cat.find(s.name)?.image} className="h-7 w-16 shrink-0" />}
+                    {cat && <SkinImage src={cat.find(s.name)?.image} size="sm" className="h-7 w-16 shrink-0" />}
                     <span className="min-w-0 flex-1 truncate">
                       <span className="font-medium">{s.name}</span> <span className="text-faint">· {cat?.find(s.name)?.skin.weapon ?? s.weapon}</span>
                     </span>

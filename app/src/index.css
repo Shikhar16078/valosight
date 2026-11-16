@@ -278,6 +278,21 @@ body::before {
     border-radius: 8px;
   }
 
+  /* An item picture still downloading (components/SkinImage.tsx): a soft shimmer in its box, then the picture
+     settles in from slightly smaller. The pop-in only plays before it ends (fill "backwards"), so hover scaling
+     on the picture keeps working afterwards. Both stop under reduced motion (rules at the end of this file). */
+  .pic-loading {
+    background:
+      linear-gradient(100deg, transparent 25%, color-mix(in oklab, var(--ink) 8%, transparent) 50%, transparent 75%),
+      color-mix(in oklab, var(--panel-3) 55%, transparent);
+    background-size: 200% 100%, 100% 100%;
+    animation: shimmer 1.4s linear infinite;
+    border-radius: 10px;
+  }
+  .pic-in {
+    animation: pic-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) backwards;
+  }
+
   .scroll-thin {
     scrollbar-width: thin;
     scrollbar-color: var(--line-strong) transparent;
@@ -294,6 +309,53 @@ body::before {
   .field :focus-visible,
   .field :focus {
     outline: none;
+  }
+
+  /* Background glows (components/Ambient.tsx). Lite effects fade them out, then hide the layer so it
+     costs nothing; turning lite off fades them back in. */
+  .ambient {
+    transition:
+      opacity 0.6s var(--ease-out),
+      visibility 0s;
+  }
+  :root[data-lite] .ambient {
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 0.6s var(--ease-out),
+      visibility 0s 0.6s;
+  }
+}
+
+/* Lite effects (settings.lite, data-lite on <html>): no backdrop blur on weak devices. The glass surfaces
+   (top bar, drawers, inspect windows, sticky list headers) are Tailwind backdrop-blur utilities, so this
+   lives in the utilities layer and wins on specificity. Without blur, the see-through backgrounds would
+   let the page show through, so each becomes (nearly) opaque in its own token: every palette stays readable.
+   The change cross-fades both ways. */
+@layer utilities {
+  /* zero specificity: an element's own transition utilities still win */
+  :where(:root [class*="backdrop-blur"]) {
+    transition-property: background-color, backdrop-filter, -webkit-backdrop-filter, box-shadow;
+    transition-duration: 0.35s;
+    transition-timing-function: var(--ease-out);
+  }
+  :root[data-lite] [class*="backdrop-blur"] {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  :root[data-lite] [class*="backdrop-blur"][class*="var(--panel)"] {
+    background-color: var(--panel);
+  }
+  :root[data-lite] [class*="backdrop-blur"][class*="bg-panel-2"] {
+    background-color: var(--panel-2);
+  }
+  /* The top bar: page colour, just short of solid. */
+  :root[data-lite] [class*="backdrop-blur"][class*="var(--bg)"] {
+    background-color: color-mix(in oklab, var(--bg) 96%, transparent);
+  }
+  /* Dimming scrims behind drawers and windows: darker instead of blurred. */
+  :root[data-lite] [class*="backdrop-blur"][class*="var(--bg)"][class*="inset-0"] {
+    background-color: color-mix(in oklab, var(--bg) 82%, transparent);
   }
 }
 
@@ -349,6 +411,13 @@ body::before {
   }
   to {
     opacity: 1;
+  }
+}
+
+@keyframes pic-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
   }
 }
 

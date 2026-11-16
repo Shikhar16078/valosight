@@ -45,6 +45,14 @@ export interface DatasetRow {
   dataset: string;
   mode: string;
   time_field: string | null;
+  /**
+   * Summary of the dataset's stored records (list datasets only), kept up to date by every write so
+   * opening an account doesn't read every record. Missing on rows written by older versions or restored
+   * from older backups; `Vault.accountDetail` computes and saves them once then.
+   */
+  count?: number;
+  first?: string | null;
+  last?: string | null;
 }
 export interface AnnotationRow {
   account_id: number;

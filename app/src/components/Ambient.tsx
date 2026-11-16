@@ -4,7 +4,8 @@ import { useSettings } from "../lib/settings";
 /**
  * The page's aurora: three large soft glows in the theme's colours that drift slowly behind
  * everything. Only transform is animated, so it stays on the GPU; off when "Living background"
- * is disabled or motion is reduced (MotionConfig skips transforms then).
+ * is disabled or motion is reduced (MotionConfig skips transforms then). Lite effects fade the whole
+ * layer out (CSS, `.ambient` under `data-lite`) and stop the drift, without changing the saved setting.
  */
 const BLOBS = [
   { color: "var(--aurora-1)", size: "70vmax", at: { left: "-18vmax", top: "-30vmax" }, path: { x: [0, 90, -40, 0], y: [0, 60, 110, 0], scale: [1, 1.12, 0.94, 1] }, dur: 38 },
@@ -13,10 +14,10 @@ const BLOBS = [
 ];
 
 export function Ambient() {
-  const { settings } = useSettings();
-  const live = settings.ambient;
+  const { settings, lite } = useSettings();
+  const live = settings.ambient && !lite;
   return (
-    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+    <div aria-hidden className="ambient pointer-events-none fixed inset-0 -z-10 overflow-hidden">
       {BLOBS.map((b, i) => (
         <motion.div
           key={i}

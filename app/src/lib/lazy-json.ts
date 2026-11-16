@@ -9,7 +9,7 @@ export function lazyJson<Raw, T>(url: string, build: (raw: Raw) => T | null, onL
   let value: T | null | undefined; // undefined = not loaded yet
   let loading: Promise<T | null> | null = null;
   const load = () =>
-    (loading ??= fetch(url)
+    (loading ??= fetch(__GAME_VERSION__ ? `${url}?v=${__GAME_VERSION__}` : url) // versioned: cached for good (vite.config.ts)
       .then((r) => {
         // The dev server answers a missing file with index.html (200), so check it's JSON.
         if (!r.ok || !/json/.test(r.headers.get("content-type") ?? "")) return null;
@@ -24,8 +24,9 @@ export function lazyJson<Raw, T>(url: string, build: (raw: Raw) => T | null, onL
         return v;
       }));
 
-  /** The value once `enabled`: undefined while loading, null when unavailable. */
-  return function useLazyJson(enabled = true): T | null | undefined {
+  /** The value once `enabled`: undefined while loading, null when unavailable. `.preload()` starts loading now
+   *  (e.g. at boot) without waiting for a component to ask. */
+  return Object.assign(function useLazyJson(enabled = true): T | null | undefined {
     const [v, setV] = useState(value);
     useEffect(() => {
       if (!enabled) return;
@@ -43,5 +44,9 @@ export function lazyJson<Raw, T>(url: string, build: (raw: Raw) => T | null, onL
       };
     }, [enabled]);
     return v;
-  };
+  }, {
+    preload: () => {
+      if (!value) void load();
+    },
+  });
 }

@@ -28,8 +28,41 @@ function files(dir: string, base = dir): string[] {
   });
 }
 
+/** The game data files (public/game/, from scripts/fetch-game.mjs; optional: a build may not have them). */
+const GAME_FILES = ["catalog.json", "passes.json", "accessories.json"];
+
+/**
+ * A short hash of the game data, so their URLs change only when the data does (`/game/catalog.json?v=…`,
+ * see lib/lazy-json.ts): the files can then be cached for good, by the browser and by the offline copy.
+ * Empty when none of them is there; "dev" on the dev server (the files can be refetched while it runs).
+ */
+let gameHash: string | undefined;
+function gameVersion(command: string): string {
+  if (command === "serve") return "dev";
+  if (gameHash !== undefined) return gameHash;
+  const h = createHash("sha256");
+  let any = false;
+  for (const f of GAME_FILES) {
+    try {
+      const bytes = readFileSync(fileURLToPath(new URL(`./public/game/${f}`, import.meta.url)));
+      h.update(f).update(bytes);
+      any = true;
+    } catch {
+      /* not fetched for this build */
+    }
+  }
+  return (gameHash = any ? h.digest("hex").slice(0, 10) : "");
+}
+
+/**
+ * Left out of the offline copy (still fetched when needed, then kept by the service worker's /assets/ rule):
+ * font subsets other than latin / latin-ext (the UI is English), and the zip-password library (only used for
+ * password-protected exports).
+ */
+const notPrecached = (f: string) => (f.endsWith(".woff2") && !/-latin(-ext)?-\d{3}-/.test(f)) || /(^|\/)zip\.js-[^/]*\.js$/.test(f);
+
 /** Security headers in the page, the app manifest and an offline service worker. */
-function valosight(): Plugin {
+function valosight(game: string): Plugin {
   return {
     name: "valosight",
     apply: "build",
@@ -50,9 +83,12 @@ function valosight(): Plugin {
       this.emitFile({ type: "asset", fileName: "demo/Demo_Player-DEMO.zip", source: demoZip });
       // Everything this release needs to run offline. Exchange rates are cached as they're used, and
       // .woff fonts are skipped: every browser with service workers uses the .woff2 copies.
-      const own = [...new Set([...Object.keys(bundle), "demo/Demo_Player-DEMO.zip"])].filter((f) => !f.endsWith(".woff") && !f.endsWith(".map"));
+      // Item pictures (/media/) are never listed: the service worker keeps the ones you look at.
+      const own = [...new Set([...Object.keys(bundle), "demo/Demo_Player-DEMO.zip"])].filter((f) => !f.endsWith(".woff") && !f.endsWith(".map") && !notPrecached(f));
       const pub = files(fileURLToPath(new URL("./public", import.meta.url))).filter((f) => !f.startsWith("rates/") && !f.startsWith("."));
-      const precache = ["/", ...[...own, ...pub].sort().map((f) => `/${f}`)];
+      // Game data is requested with its version (lib/lazy-json.ts): list that exact URL, so the cache matches it.
+      const url = (f: string) => (game && f.startsWith("game/") && f.endsWith(".json") ? `/${f}?v=${game}` : `/${f}`);
+      const precache = ["/", ...[...own, ...pub].sort().map(url)];
       // Built files carry a content hash in their name; the rest (demo, icons, manifest) keep their name when
       // they change, so their bytes go into the version too, or returning visitors would keep stale copies.
       const h = createHash("sha256").update(precache.join("\n"));
@@ -95,7 +131,7 @@ function mediaLocal(): Plugin {
     const m = await fetchMedia(path);
     res.statusCode = m.status;
     res.setHeader("Cache-Control", m.cache);
-    if (m.body) res.setHeader("Content-Type", "image/png");
+    if (m.body) res.setHeader("Content-Type", m.type ?? "image/png");
     res.end(m.body ? Buffer.from(m.body) : undefined);
   };
   return {
@@ -115,10 +151,35 @@ const HOME_URL = "https://valosight.vercel.app";
 const LOCAL_HOME_URL = "http://localhost:5175";
 
 export default defineConfig(({ command }) => ({
-  plugins: [react(), tailwindcss(), valosight(), demoInDev(), mediaLocal()],
+  plugins: [react(), tailwindcss(), valosight(gameVersion(command)), demoInDev(), mediaLocal()],
   // The home page's dev server links here (home/vite.config.ts), so keep the port fixed.
   server: { port: 5174, strictPort: true },
-  build: { chunkSizeWarningLimit: 1500 },
+  build: {
+    chunkSizeWarningLimit: 1500,
+    rolldownOptions: {
+      output: {
+        // Libraries that rarely change get their own long-cached chunks, so an app update only re-downloads app
+        // code. Recharts (and everything only it uses) stays out of the first load: only the chart code imports it.
+        codeSplitting: {
+          groups: [
+            { name: "react", test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 40 },
+            { name: "motion", test: /[\\/]node_modules[\\/](motion|framer-motion|motion-dom|motion-utils)[\\/]/, priority: 30 },
+            {
+              name: "recharts",
+              test: /[\\/]node_modules[\\/](recharts|@reduxjs|redux|react-redux|immer|reselect|d3-[^\\/]+|internmap|victory-vendor|decimal\.js-light|es-toolkit|eventemitter3|tiny-invariant)[\\/]/,
+              priority: 20,
+            },
+            { name: "table", test: /[\\/]node_modules[\\/]@tanstack[\\/]/, priority: 20 },
+            { name: "icons", test: /[\\/]node_modules[\\/]lucide-react[\\/]/, priority: 10 },
+          ],
+        },
+      },
+    },
+  },
   worker: { format: "es" },
-  define: { __APP_VERSION__: JSON.stringify(pkg.version), __HOME_URL__: JSON.stringify(command === "serve" ? LOCAL_HOME_URL : HOME_URL) },
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __HOME_URL__: JSON.stringify(command === "serve" ? LOCAL_HOME_URL : HOME_URL),
+    __GAME_VERSION__: JSON.stringify(gameVersion(command)),
+  },
 }));

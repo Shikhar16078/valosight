@@ -8,7 +8,7 @@ import { localParts, useSettings } from "../lib/settings";
 import { allocateVP } from "../lib/fifo";
 import { useMoney } from "../lib/convert";
 import { useSkinCatalog } from "../lib/skins";
-import { SkinImage } from "../components/SkinImage";
+import { SkinImage, preloadImage } from "../components/SkinImage";
 import { SkinInspect } from "./SkinInspect";
 import { PassInspect } from "./PassInspect";
 import { OtherInspect } from "./OtherInspect";
@@ -22,11 +22,12 @@ import { Collapse, SOFT, SOFT_CSS, Swap, useDebounced } from "../components/anim
 import { scrollToSection, useIntent } from "../lib/focus";
 import { spotlight } from "../lib/motion";
 
-type GroupBy = "class" | "weapon" | "edition" | "source" | "year";
+type GroupBy = "class" | "weaponOrder" | "weapon" | "edition" | "source" | "year";
 type SortBy = "newest" | "oldest" | "price" | "name";
 const GROUPS: { value: GroupBy; label: string }[] = [
-  { value: "class", label: "Weapon type" },
-  { value: "weapon", label: "Weapon (most skins first)" },
+  { value: "weaponOrder", label: "Default" }, // every weapon in the game's buy-menu order, Classic → Melee
+  { value: "class", label: "Weapon class" }, // Sidearms, SMGs, Rifles…
+  { value: "weapon", label: "Weapons with most skins" },
   { value: "edition", label: "Edition" },
   { value: "source", label: "Where bought" },
   { value: "year", label: "Year bought" },
@@ -57,9 +58,9 @@ const sourceOf = (where: string) => (where === "Night Market" ? "Night Market" :
 function loadPrefs(): { group: GroupBy; sort: SortBy } {
   try {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}");
-    return { group: GROUPS.some((g) => g.value === p.group) ? p.group : "class", sort: SORTS.some((x) => x.value === p.sort) ? p.sort : "newest" };
+    return { group: GROUPS.some((g) => g.value === p.group) ? p.group : "weaponOrder", sort: SORTS.some((x) => x.value === p.sort) ? p.sort : "newest" };
   } catch {
-    return { group: "class", sort: "newest" };
+    return { group: "weaponOrder", sort: "newest" };
   }
 }
 
@@ -306,7 +307,9 @@ export function Collection() {
       return WEAPON_CLASSES.map((c) => ({ title: c.name, cards: ordered(new Map([...byW].filter(([w]) => weaponClass(w) === c.name)), WEAPON_ORDER) })).filter((x) => x.cards.length);
     }
     const cards =
-      g === "weapon"
+      g === "weaponOrder"
+        ? ordered(bucket((s) => s.weapon), WEAPON_ORDER) // the game's buy-menu order, sidearms → melee
+        : g === "weapon"
         ? [...bucket((s) => s.weapon).entries()].sort((a, b) => b[1].length - a[1].length || WEAPON_ORDER.indexOf(a[0]) - WEAPON_ORDER.indexOf(b[0]))
         : g === "edition"
           ? ordered(bucket((s) => editionById.get(s) ?? "Unknown"), [...EDITIONS, "Bundle"])
@@ -323,7 +326,7 @@ export function Collection() {
         s={s}
         image={s.category === "Bundle" ? cat?.findBundle(s.name)?.image : cat?.find(s.name)?.image}
         onOpen={() => setDetail(s)}
-        sub={[prefs.group !== "weapon" && prefs.group !== "class" && s.category === "Skin" ? s.weapon : null, prefs.group !== "edition" && editionById.get(s) !== "Bundle" ? editionById.get(s) : null, prefs.group === "year" || prefs.group === "source" ? null : guard(s.t, f.date(s.t))].filter(Boolean).join(" · ")}
+        sub={[prefs.group !== "weapon" && prefs.group !== "weaponOrder" && prefs.group !== "class" && s.category === "Skin" ? s.weapon : null, prefs.group !== "edition" && editionById.get(s) !== "Bundle" ? editionById.get(s) : null, prefs.group === "year" || prefs.group === "source" ? null : guard(s.t, f.date(s.t))].filter(Boolean).join(" · ")}
         date={prefs.group === "year" || prefs.group === "source" ? guard(s.t, f.date(s.t)) : null}
         where={prefs.group !== "source" && s.where !== "Daily Store" ? s.where.replace(" (single item)", "") : null}
         badge={<UpgradeBadge u={upBySkin.get(s.name)} />}
@@ -346,6 +349,23 @@ export function Collection() {
   const [otherId, setOtherId] = useState<string | null>(null);
   const otherAt = otherId ? otherShown.findIndex((o) => o.r.transaction_id === otherId) : -1;
   const otherOpen = otherAt >= 0 ? otherShown[otherAt] : null;
+  // While an Inspect window is open, fetch the pictures of the items ← / → lead to, so they show at once.
+  // Sizes match what the windows ask for (SkinDetail's stage, PassInspect's reward tiles, OtherInspect's stage).
+  useEffect(() => {
+    if (settings.pictures === false || !cat) return;
+    const near = <T,>(list: T[], at: number) => (at < 0 ? [] : [list[at - 1], list[at + 1]].filter((x): x is T => x !== undefined));
+    for (const s of near(byNewest, detailAt)) {
+      const m = s.category === "Bundle" ? null : cat.find(s.name);
+      preloadImage(m ? (m.skin.chromas[0]?.image ?? m.image) : cat.findBundle(s.name)?.image, "lg");
+    }
+    for (const p of near(passes, passAt)) for (const r of (p.act && passContent?.get(p.act)?.chapters[0]?.rewards.slice(0, 6)) || []) preloadImage(r.image, "md");
+    for (const o of near(otherShown, otherAt)) {
+      const img = accessories?.image(o.note ? null : o.name);
+      const card = img && /\/largeart\.png$/.test(img) ? img.replace(/\/largeart\.png$/, "") : null;
+      if (card) for (const art of ["largeart", "wideart", "smallart"]) preloadImage(`${card}/${art}.png`, "md");
+      else preloadImage(img, o.kind === "Gun buddy" || o.kind === "Flex" ? "md" : "lg");
+    }
+  }, [settings.pictures, cat, byNewest, detailAt, passes, passAt, passContent, otherShown, otherAt, accessories]);
   const otherTotals = useMemo(() => {
     const m = new Map<string, { n: number; spent: number }>();
     for (const o of other) {
@@ -398,9 +418,9 @@ export function Collection() {
         <span className="flex items-center gap-3">
           {cat &&
             (r.category === "Battle Pass" ? (
-              <SkinImage src={cat.passImage(r.act)} fit="cover" className="h-7 w-16 shrink-0 rounded-[5px]" />
+              <SkinImage src={cat.passImage(r.act)} size="sm" fit="cover" className="h-7 w-16 shrink-0 rounded-[5px]" />
             ) : (
-              <SkinImage src={r.category === "Skin" ? cat.find(r.name)?.image : r.category === "Bundle" ? cat.findBundle(r.name)?.image : null} className="h-7 w-16 shrink-0" />
+              <SkinImage src={r.category === "Skin" ? cat.find(r.name)?.image : r.category === "Bundle" ? cat.findBundle(r.name)?.image : null} size="sm" className="h-7 w-16 shrink-0" />
             ))}
           <span className="font-medium">{r.category === "Battle Pass" ? r.pass : r.name}</span>
         </span>
@@ -461,7 +481,7 @@ export function Collection() {
       cell: (r) => (
         <div className="min-w-0 max-w-[440px]">
           <div className="flex items-center gap-2">
-            {cat && <SkinImage src={cat.find(r.skin)?.image} className="h-7 w-16 shrink-0" />}
+            {cat && <SkinImage src={cat.find(r.skin)?.image} size="sm" className="h-7 w-16 shrink-0" />}
             <span className="font-medium">{r.skin === "Unknown skin" ? "Unknown skin (name not recorded by Riot)" : r.skin}</span>
             {r.skin !== "Unknown skin" && !owned.has(r.skin) && <Badge tone="info">not bought separately</Badge>}
           </div>
@@ -496,7 +516,7 @@ export function Collection() {
       value: (u) => u.skin,
       cell: (u) => (
         <span className="flex items-center gap-3">
-          {cat && <SkinImage src={cat.find(u.skin)?.image} className="h-7 w-16 shrink-0" />}
+          {cat && <SkinImage src={cat.find(u.skin)?.image} size="sm" className="h-7 w-16 shrink-0" />}
           <span className="font-medium">{u.skin === "Unknown skin" ? "Unknown skin (not recorded)" : u.skin}</span>
         </span>
       ),
@@ -541,7 +561,7 @@ export function Collection() {
             return (
               <button type="button" key={e} onClick={() => showSkins({ eds: [e] })} title={`Show ${e} skins`} className={`group grid w-[calc(100%+1rem)] grid-cols-[118px_1fr_auto] items-center gap-3 -mx-2 rounded-md px-2 py-1 text-left transition-colors ${SOFT_CSS} hover:bg-panel-2`}>
                 <span className="flex min-w-0 items-center gap-2">
-                  {ed?.icon && <SkinImage src={ed.icon} className={`h-5 w-5 shrink-0 transition-transform ${SOFT_CSS} group-hover:scale-110`} />}
+                  {ed?.icon && <SkinImage src={ed.icon} size="xs" className={`h-5 w-5 shrink-0 transition-transform ${SOFT_CSS} group-hover:scale-110`} />}
                   <span className="truncate font-medium">{e}</span>
                 </span>
                 <div className="h-2 overflow-hidden rounded-full bg-panel-2">
@@ -798,7 +818,7 @@ export function Collection() {
                   className={`rounded-lg border px-3.5 py-2 text-left transition-colors ${otherCur === cur ? "border-accent bg-accent-soft" : "border-line bg-panel-2 hover:border-line-strong"}`}
                 >
                   <div className="flex items-center gap-1.5 text-[11.5px] uppercase tracking-[0.1em] text-muted">
-                    {cat?.currencyIcon(cur) && <SkinImage src={cat.currencyIcon(cur)} className="h-4 w-4 shrink-0" />}
+                    {cat?.currencyIcon(cur) && <SkinImage src={cat.currencyIcon(cur)} size="xs" className="h-4 w-4 shrink-0" />}
                     {u.many}
                   </div>
                   <div className="num mt-0.5">
@@ -893,7 +913,7 @@ export function Collection() {
                     }}
                     className={`flex cursor-pointer items-center justify-between gap-3 px-6 py-2.5 transition-colors ${SOFT_CSS} hover:bg-panel-2/70`}
                   >
-                    {cat && <SkinImage src={cat.find(x.name)?.image} className="h-9 w-20 shrink-0" />}
+                    {cat && <SkinImage src={cat.find(x.name)?.image} size="sm" className="h-9 w-20 shrink-0" />}
                     <div className="min-w-0 flex-1">
                       <div className="font-medium">{x.name}</div>
                       <div className="num text-[12px] text-muted">
@@ -942,7 +962,7 @@ export function Collection() {
                   className={`group flex w-full items-center gap-4 px-6 py-3 text-left transition-colors ${SOFT_CSS} hover:bg-panel-2/60`}
                 >
                   <span className="relative h-11 w-28 shrink-0 overflow-hidden rounded-lg bg-panel-2/60">
-                    <SkinImage src={cover} fit="cover" className={`absolute inset-0 h-full w-full transition-transform ${SOFT_CSS} group-hover:scale-[1.06]`} />
+                    <SkinImage src={cover} size="md" fit="cover" className={`absolute inset-0 h-full w-full transition-transform ${SOFT_CSS} group-hover:scale-[1.06]`} />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{p.pass ?? p.name}</span>
@@ -1058,7 +1078,7 @@ function SkinTile({ s, image, sub, date, where, badge, onOpen }: { s: VPItem; im
       title={`Open ${s.name}`}
       className={`spot relative flex min-w-0 flex-col justify-between gap-1.5 rounded-lg border border-line bg-panel-2/60 px-3 py-2 text-left transition-colors ${SOFT_CSS} hover:border-line-strong hover:bg-panel-3/60`}
     >
-      {image !== undefined && <SkinImage src={image} className="mx-auto h-14 w-full" />}
+      {image !== undefined && <SkinImage src={image} size="md" className="mx-auto h-14 w-full" />}
       <div className="min-w-0">
         <div className="line-clamp-2 text-[13px] font-medium leading-snug" title={s.name}>
           {s.name}
@@ -1107,7 +1127,7 @@ function UpgradeBadge({ u }: { u?: SkinUpgrades }) {
 function UpgradeChip({ u, swatch }: { u: Upgrade; swatch?: string | null }) {
   return (
     <span className="inline-flex items-center gap-1.5">
-      {swatch && <SkinImage src={swatch} className="h-5 w-5 shrink-0 rounded-[5px]" />}
+      {swatch && <SkinImage src={swatch} size="xs" className="h-5 w-5 shrink-0 rounded-[5px]" />}
       <Badge tone={u.variant ? "info" : u.level ? "win" : "neutral"}>{upgradeLabel(u)}</Badge>
     </span>
   );
@@ -1164,7 +1184,7 @@ function ChipGroup({ label, hint, children }: { label: string; hint?: string; ch
 function OtherThumb({ item, currency }: { item: string | null | undefined; currency: string | null | undefined }) {
   return (
     <span className="relative h-11 w-11 overflow-hidden rounded-lg bg-panel-2/60">
-      {item ? <SkinImage src={item} className="absolute inset-0 h-full w-full p-1" /> : <SkinImage src={currency} className="absolute inset-0 h-full w-full p-2.5 opacity-50" />}
+      {item ? <SkinImage src={item} size="sm" className="absolute inset-0 h-full w-full p-1" /> : <SkinImage src={currency} size="xs" className="absolute inset-0 h-full w-full p-2.5 opacity-50" />}
     </span>
   );
 }

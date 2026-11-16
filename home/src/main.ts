@@ -215,6 +215,7 @@ for (const d of document.querySelectorAll<HTMLDetailsElement>(".faq details")) {
 
 /* ----------------------------------------------------------------- gallery */
 const shot = document.getElementById("shot") as HTMLImageElement;
+const shotWebp = document.getElementById("shot-webp") as HTMLSourceElement | null;
 const ALT: Record<string, string> = {
   overview: "Overview page of the demo player",
   money: "Money page: total paid, VP bought and spent, spending per month and by year",
@@ -226,6 +227,8 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tabs button")) 
     const name = tab.dataset.shot!;
     for (const t of document.querySelectorAll(".tabs button")) t.setAttribute("aria-selected", String(t === tab));
     const swap = () => {
+      // The <source> wins where WebP works, so swap it first; the JPG stays the fallback.
+      if (shotWebp) shotWebp.srcset = `/shots/${name}-1440.webp 1440w, /shots/${name}-2880.webp 2880w`;
       shot.src = `/shots/${name}.jpg`;
       shot.alt = ALT[name];
     };

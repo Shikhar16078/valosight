@@ -143,3 +143,5 @@ const useCatalog = lazyJson<Raw, SkinCatalog>("/game/catalog.json", (raw) => (Ar
 export function useSkinCatalog(): SkinCatalog | null {
   return useCatalog() ?? null;
 }
+/** Start downloading the catalogue at boot (same-origin, no personal data), so pictures don't wait on it. */
+useSkinCatalog.preload = useCatalog.preload;

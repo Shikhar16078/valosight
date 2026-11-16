@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import type React from "react";
 import { useAccount } from "../lib/account";
 import { api } from "../lib/api";
+import { clearPictureCache } from "../lib/pwa";
 import { ALL_TZ, COMMON_TZ, makeFormatters, useSettings, type DateFmt } from "../lib/settings";
 import { HOME_CURRENCIES, currencySetup, useFx } from "../lib/convert";
 import { useRecords } from "../lib/account";
@@ -48,9 +49,14 @@ export function SettingsView() {
           <div className="min-w-0 flex-1 text-[12.5px] text-muted">
             <div className="text-[13.5px] font-medium text-ink">Show item pictures</div>
             Your export is never uploaded. To show your items, the app loads their pictures from Valosight's own site (never from a third party), so the site sees which pictures are asked
-            for, like any website sees the pages you open. Nothing is stored or linked to you. Turn this off and the app loads no pictures at all.
+            for, like any website sees the pages you open. The site stores nothing and links nothing to you. The app keeps the pictures you've viewed on this device, so they show instantly
+            and offline, and deletes its copy when you turn this off or remove your data (your browser's own cache may still hold some until you clear browsing data). Turn this off and the app loads no pictures at all.
           </div>
-          <Switch label="Show item pictures" on={settings.pictures !== false} onChange={(v) => update({ pictures: v })} />
+          <Switch label="Show item pictures" on={settings.pictures !== false} onChange={(v) => {
+              update({ pictures: v });
+              if (!v) clearPictureCache(); // off means no trace of which items you looked at, either
+            }}
+          />
         </div>
       </Card>
       <Card span={6} title="Timezone" hint="Riot stores everything in UTC. Pick how times are shown.">
@@ -138,6 +144,7 @@ export function SettingsView() {
                   // While the box slides closed after Cancel it still shows the last values: do nothing then.
                   if (confirm?.id !== c.id) return;
                   await api.deleteAccount(c.id);
+                  if (accounts.length <= 1) clearPictureCache(); // the vault is empty now: forget the saved item pictures too
                   setConfirm(null);
                   refresh();
                 }}
@@ -199,6 +206,7 @@ function BackupSettings() {
     setMsg(null);
     try {
       await api.restore(file);
+      clearPictureCache(); // the pictures belonged to the vault that was just replaced
       window.location.reload(); // settings, accounts and caches all come from the restored vault
     } catch (e: any) {
       setMsg({ ok: false, text: e.message });
@@ -517,8 +525,10 @@ function ThemeTile({ t, on, onClick }: { t: Theme; on: boolean; onClick: (e: Rea
 }
 
 function EffectsSettings() {
-  const { settings, update } = useSettings();
-  const row = (title: string, desc: string, control: React.ReactNode) => (
+  const { settings, update, lite, liteAuto } = useSettings();
+  // Lite effects override these without changing them; say so instead of leaving a switch that seems dead.
+  const paused = (desc: string) => (lite ? `${desc} Paused while Lite effects are on.` : desc);
+  const row = (title: string, desc: React.ReactNode, control: React.ReactNode) => (
     <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-panel-2/50 px-4 py-3">
       <div className="min-w-0">
         <div className="font-medium">{title}</div>
@@ -529,13 +539,23 @@ function EffectsSettings() {
   );
   return (
     <div className="grid gap-2.5 lg:grid-cols-2">
-      {row("Cursor glow", "A soft light follows your mouse across cards.", <Switch label="Cursor glow" on={settings.spotlight} onChange={(v) => update({ spotlight: v })} />)}
-      {row("Living background", "The background glows drift slowly.", <Switch label="Living background" on={settings.ambient} onChange={(v) => update({ ambient: v })} />)}
+      {row("Cursor glow", paused("A soft light follows your mouse across cards."), <Switch label="Cursor glow" on={settings.spotlight} onChange={(v) => update({ spotlight: v })} />)}
+      {row("Living background", paused("The background glows drift slowly."), <Switch label="Living background" on={settings.ambient} onChange={(v) => update({ ambient: v })} />)}
       {row("3D tilt", "Stat cards lean toward the pointer.", <Switch label="3D tilt" on={settings.tilt} onChange={(v) => update({ tilt: v })} />)}
       {row(
         "Neon card edges",
-        "A glowing edge that circles each card. “Always” uses a little more battery.",
+        paused("A glowing edge that circles each card. “Always” uses a little more battery."),
         <Segmented value={settings.neon} onChange={(v) => update({ neon: v })} options={[{ value: "off", label: "Off" }, { value: "hover", label: "Hover" }, { value: "always", label: "Always" }]} />,
+      )}
+      {row(
+        "Lite effects",
+        <>
+          Auto turns off blur and glow on devices with little memory or few processor cores.{" "}
+          <span className={`whitespace-nowrap font-medium transition-colors duration-300 ${liteAuto ? "text-accent" : "text-faint"}`}>
+            Auto: {liteAuto ? "on" : "off"} for this device.
+          </span>
+        </>,
+        <Segmented value={settings.lite} onChange={(v) => update({ lite: v })} options={[{ value: "auto", label: "Auto" }, { value: "on", label: "On" }, { value: "off", label: "Off" }]} />,
       )}
       {row(
         "Animations",

@@ -3,6 +3,14 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App";
 import { registerServiceWorker } from "./lib/pwa";
+import { warm } from "./lib/api";
+import { useSkinCatalog } from "./lib/skins";
+
+// Start the slow things side by side instead of one after another: the engine (worker + vault + account list)
+// and the game catalogue (same-origin, no personal data) load while React renders the first screen. The
+// current page's code is requested by App.tsx as soon as it loads.
+warm();
+useSkinCatalog.preload();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -14,6 +14,7 @@ export class VaultError extends Error {
 
 export const nowIso = () => new Date().toISOString().replace(/\.\d{3}Z$/, ".000Z");
 
+const WRITE_BATCH = 500; // queued writes per await during an import (see importExport)
 const MAX_DEPTH = 900; // files nested deeper than this are skipped (the limit the retired Python engine had)
 const utf8 = new TextDecoder("utf-8", { fatal: true }); // also drops a leading BOM, like utf-8-sig
 
@@ -164,17 +165,26 @@ export class Vault {
       const importRow: ImportRow = { account_id: acc, imported_at: nowIso(), source_name: exp.name, content_hash: hash, watermark, archive_path: null, stats: null };
       const imp = (await req(S.imports.add(importRow))) as number;
 
+      // Writes are queued without awaiting each one: requests in one transaction run in order, and a
+      // failed one aborts the whole transaction, which `finished` (awaited below) reports. Every
+      // WRITE_BATCH-th write is awaited so the queue of pending requests stays short.
+      let queued = 0;
+      const write = (r: IDBRequest) => (++queued % WRITE_BATCH ? undefined : req(r));
       const stats: Record<string, DatasetStat> = {};
+      const dsRows = new Map(((await req(S.datasets.getAll(prefix(acc)))) as DatasetRow[]).map((d) => [d.dataset, d]));
       for (const [ds, payload] of parsed) {
         const s = specs.get(ds)!;
-        const prevDs = (await req(S.datasets.get([acc, ds]))) as DatasetRow | undefined;
-        await req(S.datasets.put({ account_id: acc, dataset: ds, mode: s.mode, time_field: s.time ?? prevDs?.time_field ?? null } satisfies DatasetRow));
+        const prevDs = dsRows.get(ds);
+        const dsRow: DatasetRow = { account_id: acc, dataset: ds, mode: s.mode, time_field: s.time ?? prevDs?.time_field ?? null };
         const prep = prepared.get(ds)!;
 
         if (typeof prep === "string") {
+          // Records left from a time this file was a list are untouched, so their summary still holds.
+          if (prevDs && hasSummary(prevDs)) Object.assign(dsRow, { count: prevDs.count, first: prevDs.first, last: prevDs.last });
+          S.datasets.put(dsRow);
           const snaps = (await req(S.snapshots.getAll(prefix(acc, ds)))) as SnapshotRow[];
           const prev = latestSnapshot(snaps);
-          if (!prev || prev.data !== prep) await req(S.snapshots.put({ account_id: acc, dataset: ds, import_id: imp, wm: watermark, data: prep } satisfies SnapshotRow));
+          if (!prev || prev.data !== prep) S.snapshots.put({ account_id: acc, dataset: ds, import_id: imp, wm: watermark, data: prep } satisfies SnapshotRow);
           stats[ds] = { mode: "snapshot", in_file: 1, new: +!prev, updated: +(!!prev && prev.data !== prep), existing: +(!!prev && prev.data === prep) };
           continue;
         }
@@ -188,23 +198,25 @@ export class Vault {
           const [k, occ] = prep.keys[i];
           const data = prep.data[i];
           let old = rows.get(id(k, occ));
-          if (!old && s.mode === "keyed" && (await this.adopt(S.records, rows, id, acc, ds, k, occ, data))) old = rows.get(id(k, occ));
+          if (!old && s.mode === "keyed" && this.adopt(S.records, rows, id, acc, ds, k, occ, data)) old = rows.get(id(k, occ));
           if (!old) {
             const row: RecordRow = { account_id: acc, dataset: ds, rkey: k, occ, t: ts[i], data, wm: watermark, first_import: imp, last_import: imp };
             rows.set(id(k, occ), row);
-            await req(S.records.put(row));
+            await write(S.records.put(row));
             added++;
           } else if (old.data !== data && mayUpdate && (old.wm ?? "") <= rank) {
             Object.assign(old, { data, t: ts[i], wm: watermark, last_import: imp });
-            await req(S.records.put(old));
+            await write(S.records.put(old));
             upd++;
           } else {
             old.last_import = Math.max(old.last_import ?? 0, imp);
             if ((old.wm ?? "") < rank) old.wm = watermark;
-            await req(S.records.put(old));
+            await write(S.records.put(old));
             same++;
           }
         }
+        // `rows` now mirrors every stored record of this dataset, so its summary is exact.
+        S.datasets.put({ ...dsRow, ...summarize(rows.values()) });
         stats[ds] = { mode: s.mode, in_file: (payload as unknown[]).length, new: added, updated: upd, existing: same };
       }
 
@@ -227,13 +239,14 @@ export class Vault {
       await finished;
       return result;
     } catch (e) {
+      const cause = tx.error; // set when a queued request failed and aborted the transaction
       try {
         tx.abort();
       } catch {
         /* already finished */
       }
       await finished.catch(() => {});
-      throw e;
+      throw cause ?? e;
     }
   }
 
@@ -243,7 +256,7 @@ export class Vault {
    * app stored keys with a blank field that way too. Without this, either change would leave the
    * stored record behind as a duplicate.
    */
-  private async adopt(store: IDBObjectStore, rows: Map<string, RecordRow>, id: (k: string, o: number) => string, acc: number, ds: string, k: string, occ: number, data: string) {
+  private adopt(store: IDBObjectStore, rows: Map<string, RecordRow>, id: (k: string, o: number) => string, acc: number, ds: string, k: string, occ: number, data: string) {
     const bare = splitDupKey(k);
     let src: string;
     if (bare !== null) {
@@ -257,10 +270,10 @@ export class Vault {
     }
     const row = rows.get(id(src, 0));
     if (row) {
-      await req(store.delete([acc, ds, src, 0]));
+      store.delete([acc, ds, src, 0]);
       rows.delete(id(src, 0));
       Object.assign(row, { rkey: k, occ });
-      await req(store.put(row));
+      store.put(row);
       rows.set(id(k, occ), row);
     }
     return true;
@@ -302,31 +315,55 @@ export class Vault {
   }
 
   async accountDetail(acc: number) {
-    const tx = this.tx(["accounts", "datasets", "records", "snapshots"]);
+    const tx = this.tx(["accounts", "datasets", "snapshots"]);
     const a = (await req(tx.objectStore("accounts").get(acc))) as AccountRow | undefined;
     if (!a) return null;
-    const dsRows = ((await req(tx.objectStore("datasets").getAll(prefix(acc)))) as DatasetRow[]).sort((x, y) => cmp(x.dataset, y.dataset));
+    let dsRows = ((await req(tx.objectStore("datasets").getAll(prefix(acc)))) as DatasetRow[]).sort((x, y) => cmp(x.dataset, y.dataset));
+    const snaps = (await req(tx.objectStore("snapshots").getAll(prefix(acc)))) as SnapshotRow[];
+    const stale = dsRows.filter((d) => d.mode !== "snapshot" && !hasSummary(d)).map((d) => d.dataset);
+    if (stale.length) {
+      let healed: Map<string, DatasetRow>;
+      try {
+        healed = await this.healSummaries(acc, stale);
+      } catch {
+        // Couldn't save (e.g. storage full): still answer, computing in memory; the next open tries again.
+        const rtx = this.tx(["records"]);
+        healed = new Map();
+        for (const d of dsRows.filter((r) => stale.includes(r.dataset)))
+          healed.set(d.dataset, { ...d, ...summarize((await req(rtx.objectStore("records").getAll(prefix(acc, d.dataset)))) as RecordRow[]) });
+      }
+      dsRows = dsRows.map((d) => healed.get(d.dataset) ?? d);
+    }
     const datasets = [];
     for (const d of dsRows) {
-      let count = 1, first: string | null = null, last: string | null = null;
-      if (d.mode !== "snapshot") {
-        const recs = (await req(tx.objectStore("records").getAll(prefix(acc, d.dataset)))) as RecordRow[];
-        count = recs.length;
-        for (const r of recs) {
-          if (r.t === null) continue;
-          if (first === null || r.t < first) first = r.t;
-          if (last === null || r.t > last) last = r.t;
-        }
-      }
+      const [count, first, last] = d.mode === "snapshot" ? [1, null, null] : [d.count ?? 0, d.first ?? null, d.last ?? null];
       const spec = SPECS[d.dataset];
       datasets.push({ dataset: d.dataset, mode: d.mode, time_field: d.time_field, count, first, last, label: spec?.label ?? null, known: !!spec });
     }
-    const snaps = (await req(tx.objectStore("snapshots").getAll(prefix(acc)))) as SnapshotRow[];
     const byDs = new Map<string, SnapshotRow[]>();
     for (const s of snaps) byDs.set(s.dataset, [...(byDs.get(s.dataset) ?? []), s]);
     const snapshots: Record<string, unknown> = {};
     for (const [ds, list] of byDs) snapshots[ds] = JSON.parse(latestSnapshot(list)!.data);
     return { id: acc, username: a.username, datasets, snapshots, imports: await this.imports(acc) };
+  }
+
+  /** Compute and save the record summary of dataset rows written before it was kept (older versions, older backups). */
+  private async healSummaries(acc: number, names: string[]) {
+    const tx = this.tx(["datasets", "records"], "readwrite");
+    const finished = done(tx);
+    finished.catch(() => {}); // awaited below
+    const out = new Map<string, DatasetRow>();
+    for (const ds of names) {
+      const row = (await req(tx.objectStore("datasets").get([acc, ds]))) as DatasetRow | undefined;
+      if (!row) continue;
+      if (!hasSummary(row)) {
+        Object.assign(row, summarize((await req(tx.objectStore("records").getAll(prefix(acc, ds)))) as RecordRow[]));
+        tx.objectStore("datasets").put(row);
+      }
+      out.set(ds, row);
+    }
+    await finished;
+    return out;
   }
 
   async records(acc: number, ds: string) {
@@ -434,6 +471,14 @@ export class Vault {
       const rows = stores[s] ?? [];
       if (!Array.isArray(rows) || !rows.every((r) => validRow(s, r))) throw new VaultError("This backup is damaged. Your vault was not changed.");
     }
+    // Recompute each dataset's record summary: older backups don't have it, and a stored one isn't trusted.
+    const byDs = new Map<string, RecordRow[]>();
+    for (const r of ((stores.records as RecordRow[]) ?? [])) {
+      const k = `${r.account_id}\u0000${r.dataset}`;
+      if (!byDs.has(k)) byDs.set(k, []);
+      byDs.get(k)!.push(r);
+    }
+    for (const d of ((stores.datasets as DatasetRow[]) ?? [])) Object.assign(d, summarize(byDs.get(`${d.account_id}\u0000${d.dataset}`) ?? []));
     const tx = this.tx([...STORES], "readwrite");
     try {
       for (const s of STORES) {
@@ -472,6 +517,20 @@ const SHAPES: Record<string, Record<string, "number" | "string">> = {
 
 function validRow(store: string, row: unknown): boolean {
   return isObj(row) && Object.entries(SHAPES[store]).every(([k, t]) => typeof row[k] === t);
+}
+
+const hasSummary = (d: DatasetRow) => typeof d.count === "number" && d.first !== undefined && d.last !== undefined;
+
+/** How many records a dataset has and the time span they cover (records without a time are counted, not dated). */
+function summarize(rows: Iterable<RecordRow>): { count: number; first: string | null; last: string | null } {
+  let count = 0, first: string | null = null, last: string | null = null;
+  for (const r of rows) {
+    count++;
+    if (r.t == null) continue;
+    if (first === null || r.t < first) first = r.t;
+    if (last === null || r.t > last) last = r.t;
+  }
+  return { count, first, last };
 }
 
 /** The newest snapshot: highest watermark (no watermark counts as oldest), then the latest import. */

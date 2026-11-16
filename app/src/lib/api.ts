@@ -76,8 +76,28 @@ async function local<T>(method: string, args: unknown[] = [], transfer: Transfer
 
 const recCache = new Map<string, Promise<Rec[]>>();
 
+/** The account list asked for at boot by `warm()`, handed to the first `api.accounts()` call (once). */
+let early: Promise<Account[]> | null = null;
+
+/**
+ * Start the engine while React is still rendering: loads the worker client, starts the worker (which opens the
+ * vault) and asks for the account list, so the first screen doesn't wait for each step in turn.
+ */
+export function warm() {
+  if (early) return;
+  const p = local<Account[]>("accounts");
+  early = p;
+  p.catch(() => {
+    if (early === p) early = null; // the real call asks again and reports the error
+  });
+}
+
 export const api = {
-  accounts: () => local<Account[]>("accounts"),
+  accounts: () => {
+    const p = early ?? local<Account[]>("accounts");
+    early = null;
+    return p;
+  },
   account: (id: number) => local<AccountDetail>("account", [id]),
   records: (id: number, ds: string) => {
     const k = `${id}|${ds}`;

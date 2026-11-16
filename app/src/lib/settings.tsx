@@ -24,6 +24,12 @@ export interface Settings {
   tilt: boolean;
   /** "system" follows the OS reduce-motion setting; "reduced" turns movement off in the app regardless. */
   motion: "system" | "reduced";
+  /**
+   * Lite effects: no glass blur, background glows, cursor glow or neon edges, for weak devices. "auto" turns it
+   * on when the device looks weak (see useWeakDevice). It only overrides while active: spotlight/neon/ambient
+   * keep their saved values.
+   */
+  lite: "auto" | "on" | "off";
   /** Optional "show amounts also in…" currency, e.g. "INR". */
   homeCurrency: string;
   /** How many home-currency units one unit of each source currency is worth, e.g. { PHP: 1.48 }. */
@@ -41,7 +47,7 @@ export interface Settings {
   pictures?: boolean;
 }
 
-export const DEFAULTS: Settings = { tz: "Asia/Kolkata", dateFmt: "dd-MMM-yyyy", hour12: true, theme: "vault", darkTheme: "vault", lightTheme: "paper", spotlight: true, neon: "hover", ambient: true, tilt: true, motion: "system", homeCurrency: "", rates: {} };
+export const DEFAULTS: Settings = { tz: "Asia/Kolkata", dateFmt: "dd-MMM-yyyy", hour12: true, theme: "vault", darkTheme: "vault", lightTheme: "paper", spotlight: true, neon: "hover", ambient: true, tilt: true, motion: "system", lite: "auto", homeCurrency: "", rates: {} };
 
 export const COMMON_TZ: { tz: string; label: string }[] = [
   { tz: "Asia/Kolkata", label: "IST · India" },
@@ -198,6 +204,10 @@ interface Ctx {
   /** Switch theme (an id or "system") with the animated dissolve (lib/themes.ts). */
   setTheme: (theme: string) => void;
   f: Fmt;
+  /** Lite effects in force right now (settings.lite, with "auto" resolved for this device). */
+  lite: boolean;
+  /** What "auto" means on this device: true when it looks weak. */
+  liteAuto: boolean;
 }
 const SettingsCtx = createContext<Ctx | null>(null);
 
@@ -221,6 +231,36 @@ function takeThemeHandoff(): string | null {
   url.searchParams.delete("theme");
   window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
   return themeById(id) ? id : null;
+}
+
+/** Few cores or little memory (deviceMemory is Chromium-only, so it's optional). */
+function weakHardware(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const cores = navigator.hardwareConcurrency;
+  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  const fewCores = typeof cores === "number" && cores > 0 && cores <= 4;
+  const littleMemory = typeof memory === "number" && memory > 0 && memory <= 4;
+  // A 4-core laptop with plenty of memory handles the glass fine: only very few cores, or few cores AND little
+  // memory, count as weak (deviceMemory is Chromium-only, so elsewhere only the core count decides).
+  return (typeof cores === "number" && cores > 0 && cores <= 2) || (typeof memory === "number" && memory > 0 && memory <= 2) || (fewCores && littleMemory);
+}
+
+const REDUCED_TRANSPARENCY = "(prefers-reduced-transparency: reduce)";
+
+/** Whether "auto" lite effects apply here: weak hardware, or the OS asks for less transparency (followed live). */
+function useWeakDevice(): boolean {
+  const [weak, setWeak] = useState(() => weakHardware() || window.matchMedia(REDUCED_TRANSPARENCY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(REDUCED_TRANSPARENCY);
+    const follow = () => {
+      setWeak(weakHardware() || mq.matches);
+    };
+    mq.addEventListener("change", follow);
+    return () => {
+      mq.removeEventListener("change", follow);
+    };
+  }, []);
+  return weak;
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
@@ -258,13 +298,19 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     api.saveSettings(p).catch(() => {});
   }, []);
 
-  // Effects are switched in CSS through attributes on <html>.
+  const liteAuto = useWeakDevice();
+  const lite = settings.lite === "on" || (settings.lite !== "off" && liteAuto);
+
+  // Effects are switched in CSS through attributes on <html>. Lite effects override spotlight/neon (and, in CSS,
+  // blur and the background glows) without touching their saved values, so turning lite off restores them.
   useEffect(() => {
     const d = document.documentElement.dataset;
-    d.spotlight = settings.spotlight ? "on" : "off";
-    d.neon = settings.neon;
+    d.spotlight = settings.spotlight && !lite ? "on" : "off";
+    d.neon = lite ? "off" : settings.neon;
     d.motion = settings.motion;
-  }, [settings.spotlight, settings.neon, settings.motion]);
+    if (lite) d.lite = "";
+    else delete d.lite;
+  }, [settings.spotlight, settings.neon, settings.motion, lite]);
 
   const setTheme = useCallback(
     (theme: string) => {
@@ -283,7 +329,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   );
 
   const f = useMemo(() => makeFormatters(settings), [settings]);
-  return <SettingsCtx.Provider value={{ settings, update, setTheme, f }}>{children}</SettingsCtx.Provider>;
+  return <SettingsCtx.Provider value={{ settings, update, setTheme, f, lite, liteAuto }}>{children}</SettingsCtx.Provider>;
 }
 
 export function useSettings() {

@@ -205,7 +205,7 @@ function RewardTile({ r }: { r: Reward }) {
         {r.kind === "title" ? (
           <span className="absolute inset-0 grid place-items-center px-3 text-center font-display text-[15px] font-semibold leading-tight">“{r.name}”</span>
         ) : r.image ? (
-          <SkinImage src={r.image} className={`absolute inset-0 h-full w-full transition-transform ${SOFT_CSS} group-hover:scale-[1.06] ${FIT[r.kind]}`} />
+          <SkinImage src={r.image} size="md" className={`absolute inset-0 h-full w-full transition-transform ${SOFT_CSS} group-hover:scale-[1.06] ${FIT[r.kind]}`} />
         ) : (
           <span className="absolute inset-0 grid place-items-center">
             <Gift size={26} className="text-faint" />

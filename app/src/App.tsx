@@ -2,32 +2,100 @@ import { AnimatePresence, MotionConfig, motion, useScroll, useSpring } from "mot
 import { PrivacyProvider, PrivacyToggle, Sens, useHideOn, usePrivacy } from "./lib/privacy";
 import { APP_NAME, Logo, Wordmark } from "./components/Logo";
 import { CalendarRange, Check, ChevronDown, Database, FlaskConical, Gavel, House, LayoutDashboard, LifeBuoy, Settings, Users, Shield, Sparkles, Swords, Upload, Wallet } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { AccountProvider, useAccount, type Range } from "./lib/account";
 import { SettingsProvider, useSettings } from "./lib/settings";
 import { homeUrl } from "./lib/home";
 import { DS } from "./lib/valorant";
 import { EASE_EMPH } from "./lib/motion";
-import { Loading } from "./components/ui";
+import { Loading, PageSkeleton } from "./components/ui";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { lazyRetry } from "./lib/lazy-retry";
 import { Ambient } from "./components/Ambient";
 import { Footer } from "./components/Footer";
 import { FxProvider } from "./lib/convert";
 import { api } from "./lib/api";
+import { clearPictureCache } from "./lib/pwa";
 import { demoTarget, isDemoAccount, loadDemo } from "./lib/demo";
-import { Overview } from "./views/Overview";
-import { Money } from "./views/Money";
-import { Collection } from "./views/Collection";
-import { Matches } from "./views/Matches";
-import { Security } from "./views/Security";
-import { Conduct } from "./views/Conduct";
-import { DataBrowser } from "./views/DataBrowser";
-import { Imports } from "./views/Imports";
-import { SettingsView } from "./views/SettingsView";
-import { Recovery } from "./views/Recovery";
-import { AllAccounts } from "./views/AllAccounts";
 
 type ViewId = "overview" | "money" | "collection" | "matches" | "security" | "conduct" | "data" | "recovery" | "accounts" | "import" | "settings";
+
+/** One shared request per chunk, whether prefetching or rendering asks first; a failed one (offline) is retried. */
+function once<T>(load: () => Promise<T>): () => Promise<T> {
+  let p: Promise<T> | null = null;
+  return () =>
+    (p ??= load().catch((e) => {
+      p = null;
+      throw e;
+    }));
+}
+
+// Each page is its own chunk, so the first screen only downloads the page it shows. The others are fetched in
+// the background once the browser is idle (and on hover/focus of their top-bar icon), so switching stays instant.
+const LOADERS = {
+  overview: once(() => import("./views/Overview").then((m) => ({ default: m.Overview }))),
+  money: once(() => import("./views/Money").then((m) => ({ default: m.Money }))),
+  collection: once(() => import("./views/Collection").then((m) => ({ default: m.Collection }))),
+  matches: once(() => import("./views/Matches").then((m) => ({ default: m.Matches }))),
+  security: once(() => import("./views/Security").then((m) => ({ default: m.Security }))),
+  conduct: once(() => import("./views/Conduct").then((m) => ({ default: m.Conduct }))),
+  data: once(() => import("./views/DataBrowser").then((m) => ({ default: m.DataBrowser }))),
+  import: once(() => import("./views/Imports").then((m) => ({ default: m.Imports }))),
+  settings: once(() => import("./views/SettingsView").then((m) => ({ default: m.SettingsView }))),
+  recovery: once(() => import("./views/Recovery").then((m) => ({ default: m.Recovery }))),
+  accounts: once(() => import("./views/AllAccounts").then((m) => ({ default: m.AllAccounts }))),
+};
+
+const prefetchPage = (v: string) => {
+  if (Object.hasOwn(LOADERS, v)) LOADERS[v as ViewId]().catch(() => {});
+};
+
+const Overview = lazyRetry(LOADERS.overview);
+const Money = lazyRetry(LOADERS.money);
+const Collection = lazyRetry(LOADERS.collection);
+const Matches = lazyRetry(LOADERS.matches);
+const Security = lazyRetry(LOADERS.security);
+const Conduct = lazyRetry(LOADERS.conduct);
+const DataBrowser = lazyRetry(LOADERS.data);
+const Imports = lazyRetry(LOADERS.import);
+const SettingsView = lazyRetry(LOADERS.settings);
+const Recovery = lazyRetry(LOADERS.recovery);
+const AllAccounts = lazyRetry(LOADERS.accounts);
+
+// The page in the address is needed first: ask for it now, alongside the engine and the catalogue (main.tsx).
+// (With no accounts yet the app shows Import instead; that chunk is small and follows right after.)
+prefetchPage(window.location.hash.slice(1).split(":")[0] || "overview");
+
+/** Load every other page's code once the first screen is up and the browser has nothing else to do. */
+function usePrefetchPages(ready: boolean) {
+  useEffect(() => {
+    if (!ready) return;
+    const all = () => {
+      for (const v of Object.keys(LOADERS) as ViewId[]) prefetchPage(v);
+    };
+    if ("requestIdleCallback" in window) {
+      const id = requestIdleCallback(all, { timeout: 4000 });
+      return () => cancelIdleCallback(id);
+    }
+    const t = setTimeout(all, 1500);
+    return () => clearTimeout(t);
+  }, [ready]);
+}
+
+/** Shown while a page's code downloads: the same frame and placeholders a page shows while its data loads. */
+function PageFallback() {
+  return (
+    <div className="mx-auto w-full max-w-[1400px] px-4 pb-16 pt-6 sm:px-8" aria-busy>
+      <div className="mb-6" aria-hidden>
+        <div className="skeleton h-3 w-24" />
+        <div className="skeleton mt-2 h-[30px] w-56" />
+      </div>
+      <div className="grid grid-cols-12 gap-4">
+        <PageSkeleton />
+      </div>
+    </div>
+  );
+}
 type Group = "Insights" | "Tools" | "Account recovery" | "App";
 const NAV: { id: ViewId; label: string; icon: ReactNode; group: Group; needs?: string[] }[] = [
   { id: "overview", label: "Overview", icon: <LayoutDashboard size={17} />, group: "Insights" },
@@ -280,8 +348,14 @@ function IconNav({ items, view, go, className }: { items: typeof NAV; view: View
           {i > 0 && items[i - 1].group !== n.group && <span className="mx-1 h-5 w-px shrink-0 bg-line" aria-hidden />}
           <button
             onClick={() => go(n.id)}
-            onPointerEnter={(e) => e.pointerType === "mouse" && point(n.id, e.currentTarget)}
-            onFocus={(e) => e.currentTarget.matches(":focus-visible") && point(n.id, e.currentTarget)}
+            onPointerEnter={(e) => {
+              prefetchPage(n.id);
+              if (e.pointerType === "mouse") point(n.id, e.currentTarget);
+            }}
+            onFocus={(e) => {
+              prefetchPage(n.id);
+              if (e.currentTarget.matches(":focus-visible")) point(n.id, e.currentTarget);
+            }}
             onBlur={() => setTip(null)}
             aria-label={n.label}
             aria-current={view === n.id ? "page" : undefined}
@@ -378,6 +452,7 @@ function Shell() {
   const { accounts, accountId, loading, error, has, setAccountId, refresh } = useAccount();
   useHideOn(accountId); // switching accounts goes back to privacy mode (here, as the Shell is always mounted)
   const [view, go] = useHashView();
+  usePrefetchPages(!loading);
   const [demo, setDemo] = useState<{ busy: boolean; error?: string }>({ busy: false });
 
   // #demo (or #demo:<page>) loads the made-up demo player and opens it.
@@ -424,6 +499,7 @@ function Shell() {
   const removeDemo = async () => {
     if (!current) return;
     await api.deleteAccount(current.id);
+    if (accounts.length <= 1) clearPictureCache(); // the last account: nothing left that pictures belong to
     await refresh();
     go(accounts.length > 1 ? "overview" : "import");
   };
@@ -501,7 +577,9 @@ function Shell() {
                 </div>
               </div>
             )}
-            <ErrorBoundary key={`${effective}:${accountId}`}>{page}</ErrorBoundary>
+            <ErrorBoundary key={`${effective}:${accountId}`}>
+              <Suspense fallback={<PageFallback />}>{page}</Suspense>
+            </ErrorBoundary>
         </motion.div>
         <Footer go={(v) => go(v as ViewId)} empty={noAccounts} />
       </main>

@@ -80,7 +80,10 @@
         <div class="hero-shot" data-reveal>
           <div class="frame tilt">
             <div class="frame-bar"><span></span><span></span><span></span><em>valosight-app · demo player</em></div>
-            <img src="/shots/overview.jpg" width="2880" height="1620" alt="Valosight overview of the demo player: account details with private fields hidden, IP addresses, Riot security alerts, money spent and where it went, and skins, battle passes and bundles owned" fetchpriority="high" />
+            <picture>
+              <source type="image/webp" srcset="/shots/overview-1440.webp 1440w, /shots/overview-2880.webp 2880w" sizes="(min-width: 961px) min(56vw, 760px), calc(100vw - 32px)" />
+              <img src="/shots/overview.jpg" width="2880" height="1620" alt="Valosight overview of the demo player: account details with private fields hidden, IP addresses, Riot security alerts, money spent and where it went, and skins, battle passes and bundles owned" fetchpriority="high" />
+            </picture>
           </div>
           <div class="chip chip-a"><i data-lucide="shield-alert"></i> 1 suspicious login found</div>
           <div class="chip chip-b"><i data-lucide="hard-drive"></i> Stored only on this device</div>
@@ -135,7 +138,10 @@
             <button role="tab" aria-selected="false" data-shot="security">Security</button>
           </div>
           <div class="frame">
-            <img id="shot" src="/shots/overview.jpg" width="2880" height="1620" loading="lazy" alt="Overview page of the demo player" />
+            <picture>
+              <source id="shot-webp" type="image/webp" srcset="/shots/overview-1440.webp 1440w, /shots/overview-2880.webp 2880w" sizes="(min-width: 1464px) 1336px, calc(100vw - 32px)" />
+              <img id="shot" src="/shots/overview.jpg" width="2880" height="1620" loading="lazy" alt="Overview page of the demo player" />
+            </picture>
           </div>
           <p class="caption">Screens from the demo player, a made-up account you can <a href="%APP_URL%/#demo">explore yourself</a>.</p>
         </div>
@@ -260,7 +266,7 @@
           <article class="card" data-reveal>
             <i data-lucide="wifi-off"></i>
             <h3>Works offline</h3>
-            <p>The app keeps a copy of itself on your device. It never needs the internet to work with your data (only item pictures need a connection).</p>
+            <p>The app keeps a copy of itself on your device. It never needs the internet to work with your data (only item pictures you haven't viewed yet need a connection).</p>
             <p class="check"><b>Check:</b> open the app once, turn off your Wi-Fi, then import.</p>
           </article>
           <article class="card" data-reveal>
@@ -272,7 +278,7 @@
           <article class="card" data-reveal>
             <i data-lucide="eye-off"></i>
             <h3>No accounts, no tracking</h3>
-            <p>No sign-up and no cookies. This website counts visits anonymously with Vercel Web Analytics; the app has no analytics at all. It shows your items with pictures from Valosight's own site (never a third party), so, like any website, the site sees which pictures are asked for. Nothing is stored or linked to you, and you can turn pictures off in Settings.</p>
+            <p>No sign-up and no cookies. This website counts visits anonymously with Vercel Web Analytics; the app has no analytics at all. It shows your items with pictures from Valosight's own site (never a third party), so, like any website, the site sees which pictures are asked for. The site stores nothing and links nothing to you. The app keeps the pictures you've viewed on your device so they show instantly, and deletes its copy when you turn pictures off in Settings or remove your data.</p>
           </article>
         </div>
       </section>

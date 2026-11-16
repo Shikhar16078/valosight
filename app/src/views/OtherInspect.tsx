@@ -107,11 +107,11 @@ function Stage({ item, image, currencyIcon }: { item: OtherItem; image: string |
           </div>
         </div>
       ) : image ? (
-        <SkinImage src={image} className={small ? "absolute inset-0 m-auto h-[min(60%,208px)] w-[min(60%,208px)]" : "absolute inset-[8%] h-[84%] w-[84%]"} />
+        <SkinImage src={image} size={small ? "md" : "lg"} className={small ? "absolute inset-0 m-auto h-[min(60%,208px)] w-[min(60%,208px)]" : "absolute inset-[8%] h-[84%] w-[84%]"} />
       ) : (
         <div className="absolute inset-0 grid place-items-center">
           <div className="flex flex-col items-center gap-3 text-center">
-            <SkinImage src={currencyIcon} className="h-20 w-20 opacity-40" />
+            <SkinImage src={currencyIcon} size="sm" className="h-20 w-20 opacity-40" />
             <span className="text-[12.5px] text-faint">No picture: Riot didn't name the item</span>
           </div>
         </div>
@@ -124,7 +124,7 @@ function Stage({ item, image, currencyIcon }: { item: OtherItem; image: string |
 function Art({ src, label, className, tall = false }: { src: string; label: string; className: string; tall?: boolean }) {
   return (
     <figure className={`flex min-h-0 shrink-0 flex-col justify-center gap-1.5 ${tall ? "h-full items-center" : "items-start"}`}>
-      <SkinImage src={src} className={`min-h-0 rounded-lg shadow-[var(--shadow-2)] ${className}`} />
+      <SkinImage src={src} size="md" className={`min-h-0 rounded-lg shadow-[var(--shadow-2)] ${className}`} />
       <figcaption className="text-[11px] uppercase tracking-[0.12em] text-faint">{label}</figcaption>
     </figure>
   );
