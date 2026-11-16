@@ -5,13 +5,10 @@ import type { Rec } from "../lib/api";
 import { ConvertedChips, PaidIn, useMoney } from "../lib/convert";
 import { allocateVP, type Allocation } from "../lib/fifo";
 import { localParts, useSettings } from "../lib/settings";
-import { DS, amountPaid, classifyAllVP, isRealMatch, isVP, matchMinutes, money, n0, payMethod } from "../lib/valorant";
+import { DS, amountPaid, classifyAllVP, isVP, money, n0, payMethod } from "../lib/valorant";
 import { Badge, Card, Empty, KV, Page, Stat } from "../components/ui";
-import { C, Donut, MonthlyChart, WeekHourHeatmap, monthSpan } from "../components/charts";
+import { C, Donut, MonthlyChart, monthSpan } from "../components/charts";
 import { DataTable, type Col } from "../components/DataTable";
-
-const WD = ["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"];
-const IMPULSE_MIN = 15;
 
 /** IP of the login event closest to `t` (within 6 h). `logins` must be sorted by time. */
 export function nearestIp(logins: Rec[], t: string): string | null {
@@ -45,7 +42,6 @@ export function Money() {
   const payAll = useRecords(DS.payments, false);
   const store = useRecords(DS.store);
   const storeAll = useRecords(DS.store, false);
-  const mh = useRecords(DS.matches);
   const logins = useRecords(DS.logins, false);
   const tags = useAnnotations("ip");
 
@@ -58,7 +54,6 @@ export function Money() {
   const total = cur[0]?.[1] ?? 0;
   const vpBought = pay.data.reduce((a, p) => a + (Number(p.game_currency_granted) || 0), 0);
   const vpItems = useMemo(() => classifyAllVP(store.data, storeAll.all), [store.data, storeAll.all]);
-  const vpById = useMemo(() => new Map(classifyAllVP(storeAll.all).map((x) => [x.r.transaction_id, x])), [storeAll.all]);
   const vpSpent = vpItems.reduce((a, x) => a + x.cost, 0);
 
   // FIFO always runs over the full history so a filtered period still knows where earlier VP came from.
@@ -85,8 +80,8 @@ export function Money() {
   const lowest = Math.min(0, ...balance.map((b) => b.balance));
 
   const yearly = useMemo(() => {
-    const m = new Map<number, { amt: number; n: number; vp: number; min: number; games: number }>();
-    const get = (y: number) => m.get(y) ?? (m.set(y, { amt: 0, n: 0, vp: 0, min: 0, games: 0 }), m.get(y)!);
+    const m = new Map<number, { amt: number; n: number; vp: number }>();
+    const get = (y: number) => m.get(y) ?? (m.set(y, { amt: 0, n: 0, vp: 0 }), m.get(y)!);
     for (const p of pay.data) {
       if (p.currency_code !== main || !p._t) continue;
       const e = get(localParts(p._t, settings.tz).y);
@@ -94,32 +89,23 @@ export function Money() {
       e.n++;
       e.vp += Number(p.game_currency_granted) || 0;
     }
-    for (const g of mh.data) {
-      if (!g._t || !isRealMatch(g)) continue;
-      const e = get(localParts(g._t, settings.tz).y);
-      e.min += matchMinutes(g) ?? 0;
-      e.games++;
-    }
     return [...m.entries()].sort((a, b) => a[0] - b[0]);
-  }, [pay.data, mh.data, main, settings.tz]);
+  }, [pay.data, main, settings.tz]);
   const maxYear = Math.max(1, ...yearly.map(([, e]) => e.amt));
 
-  const habits = useMemo(() => {
-    const ps = pay.data.filter((p) => p._t).sort((a, b) => a._t!.localeCompare(b._t!));
-    const spends = storeAll.all.filter((r) => isVP(r) && r._t).sort((a, b) => a._t!.localeCompare(b._t!));
-    const impulse: { p: Rec; first: Rec; minutes: number }[] = [];
-    for (const p of ps) {
-      const t = Date.parse(p._t!);
-      const s = spends.find((r) => Date.parse(r._t!) >= t && Date.parse(r._t!) - t <= IMPULSE_MIN * 60e3);
-      if (s) impulse.push({ p, first: s, minutes: Math.max(0, Math.round((Date.parse(s._t!) - t) / 60e3)) });
+  // Riot sells VP in fixed top-up plans, so payments of the same amount and currency are the same plan.
+  const plans = useMemo(() => {
+    const m = new Map<string, { amt: number; cur: string; n: number; vp: number }>();
+    for (const p of pay.data) {
+      const amt = Math.round(amountPaid(p) * 100) / 100;
+      const cur = p.currency_code ?? "?";
+      const e = m.get(`${cur} ${amt}`) ?? (m.set(`${cur} ${amt}`, { amt, cur, n: 0, vp: 0 }), m.get(`${cur} ${amt}`)!);
+      e.n++;
+      e.vp = Math.max(e.vp, Number(p.game_currency_granted) || 0);
     }
-    const gaps = ps.slice(1).map((p, i) => (Date.parse(p._t!) - Date.parse(ps[i]._t!)) / 864e5);
-    const median = gaps.length ? [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : null;
-    const wd = Array(7).fill(0) as number[];
-    for (const p of ps) wd[localParts(p._t!, settings.tz).wd]++;
-    const topWd = wd.indexOf(Math.max(...wd));
-    return { impulse, median, topWd: ps.length ? topWd : -1, topWdN: wd[topWd] ?? 0 };
-  }, [pay.data, storeAll.all, settings.tz]);
+    return [...m.values()].sort((a, b) => b.n - a.n || b.amt - a.amt);
+  }, [pay.data]);
+  const PLANS_SHOWN = 4;
 
   const vpWhere = useMemo(() => {
     const label = (c: string) => (c === "Skin" ? "Skins" : c === "Battle Pass" ? "Battle passes" : c === "Bundle" ? "Bundles" : "Unknown items");
@@ -189,7 +175,7 @@ export function Money() {
   if (!has(DS.payments)) return <Page code="01 / Money" title="Money"><Card><Empty title="No payment data">This export has no VALORANT payment records.</Empty></Card></Page>;
 
   return (
-    <Page code="01 / Money" title="Real money & VP" loading={pay.loading || payAll.loading || store.loading || storeAll.loading || mh.loading} sub={`Amounts in the currency Riot charged${m$.targets.length ? ` (≈ ${m$.targets.join(", ")} using your rates)` : ""} · times in ${f.tzLabel}`}>
+    <Page code="01 / Money" title="Real money & VP" loading={pay.loading || payAll.loading || store.loading || storeAll.loading} sub={`Amounts in the currency Riot charged${m$.targets.length ? ` (≈ ${m$.targets.join(", ")} using your rates)` : ""} · times in ${f.tzLabel}`}>
       <Stat
         label="Total paid"
         value={total}
@@ -198,9 +184,47 @@ export function Money() {
         extra={<ConvertedChips v={total} cur={main} items={pay.data.filter((p) => p.currency_code === main).map((p) => ({ v: amountPaid(p), t: p._t }))} />}
         sub={cur.length > 1 ? `+ ${cur.slice(1).map(([c, v]) => money(v, c)).join(", ")}` : `across ${pay.data.length} payments`}
       />
-      <Stat label="Average payment" value={pay.data.length ? total / pay.data.length : 0} format={(v) => money(v, main)} sub={`largest ${money(Math.max(0, ...pay.data.map(amountPaid)), main)}`} />
+      <Stat
+        label="Most bought top-up"
+        value={plans[0]?.amt ?? 0}
+        format={(v) => (plans[0] ? money(v, plans[0].cur) : "—")}
+        extra={
+          plans[0] ? (
+            <div className="text-[12.5px]">
+              <div className="text-muted">
+                bought <b className="num text-ink">{plans[0].n}×</b> · {n0(plans[0].vp)} VP each
+              </div>
+              {plans.length > 1 && (
+                <ul className="mt-2 space-y-0.5 border-t border-line pt-2">
+                  {plans.slice(1, PLANS_SHOWN).map((x) => (
+                    <li key={`${x.cur} ${x.amt}`} className="flex items-baseline justify-between gap-3">
+                      <span className="num">
+                        {money(x.amt, x.cur)} <span className="text-faint">· {n0(x.vp)} VP</span>
+                      </span>
+                      <span className="num text-muted">{x.n}×</span>
+                    </li>
+                  ))}
+                  {plans.length > PLANS_SHOWN && <li className="text-faint">+ {plans.length - PLANS_SHOWN} more plans</li>}
+                </ul>
+              )}
+            </div>
+          ) : undefined
+        }
+        sub={plans[0] ? undefined : "no top-ups in this period"}
+      />
       <Stat label="VP bought" value={vpBought} sub={`${total ? (vpBought / total).toFixed(2) : "—"} VP per ${main}`} />
       <Stat label="VP spent" value={vpSpent} tone={vpBought - vpSpent < 0 ? "default" : "win"} sub={`difference ${n0(vpBought - vpSpent)} VP (free VP not included)`} />
+
+      <Card span={6} title="Where your VP went">
+        <Donut data={vpWhere} format={(v) => `${n0(v)} VP`} center={<><div className="num text-xl font-medium">{n0(vpSpent)}</div><div className="text-[11px] uppercase tracking-widest text-muted">VP spent</div></>} />
+      </Card>
+      <Card span={6} title="Payment methods">
+        <Donut data={methods} format={(v) => money(v, main)} center={<><div className="num text-xl font-medium">{money(methods.reduce((a, m) => a + m.value, 0), main)}</div><div className="text-[11px] uppercase tracking-widest text-muted">Paid</div></>} />
+        <div className="mt-4">
+          <KV k="Country on payments" v={[...new Set(pay.data.map((p) => p.country_code))].join(", ") || "—"} />
+          <KV k="Gifts sent" v={String(pay.data.filter((p) => p.recipient_id).length)} mono />
+        </div>
+      </Card>
 
       <Card span={8} title="Spending per month" hint={`${main} paid each month`}>
         {monthly.length ? <MonthlyChart data={monthly} series={[{ key: "spend", label: "Paid", color: C.accent }]} yFormat={(v) => money(v, main)} /> : <Empty title="No payments in this period" />}
@@ -251,82 +275,6 @@ export function Money() {
           <span>
             VP spent without a matching payment: <b className="num text-ink">{n0(fifo.unfundedVP)}</b>
           </span>
-        </div>
-      </Card>
-
-      <Card span={6} title="Cost per hour played" hint={`${main} paid ÷ time in matches, per year`} pad={false}>
-        <table className="w-full text-[13.5px]">
-          <thead>
-            <tr className="bg-panel-2 text-left text-[11.5px] uppercase tracking-[0.08em] text-muted">
-              <th className="px-5 py-2.5">Year</th>
-              <th className="px-3 py-2.5 text-right">Paid</th>
-              <th className="px-3 py-2.5 text-right">Hours</th>
-              <th className="px-3 py-2.5 text-right">Per hour</th>
-              <th className="px-5 py-2.5 text-right">Per match</th>
-            </tr>
-          </thead>
-          <tbody>
-            {yearly.map(([y, e]) => {
-              const h = e.min / 60;
-              return (
-                <tr key={y} className="border-b border-line last:border-0">
-                  <td className="num px-5 py-2.5 font-medium">{y}</td>
-                  <td className="num px-3 py-2.5 text-right">{money(e.amt, main)}</td>
-                  <td className="num px-3 py-2.5 text-right">{h.toFixed(0)}</td>
-                  <td className="num px-3 py-2.5 text-right">{h >= 1 ? money(e.amt / h, main, 2) : "—"}</td>
-                  <td className="num px-5 py-2.5 text-right">{e.games ? money(e.amt / e.games, main, 2) : "—"}</td>
-                </tr>
-              );
-            })}
-            {(() => {
-              const t = yearly.reduce((a, [, e]) => ({ amt: a.amt + e.amt, min: a.min + e.min, games: a.games + e.games }), { amt: 0, min: 0, games: 0 });
-              return (
-                <tr className="bg-panel-2 font-semibold">
-                  <td className="px-5 py-2.5">All</td>
-                  <td className="num px-3 py-2.5 text-right">{money(t.amt, main)}</td>
-                  <td className="num px-3 py-2.5 text-right">{(t.min / 60).toFixed(0)}</td>
-                  <td className="num px-3 py-2.5 text-right">{t.min >= 60 ? money(t.amt / (t.min / 60), main, 2) : "—"}</td>
-                  <td className="num px-5 py-2.5 text-right">{t.games ? money(t.amt / t.games, main, 2) : "—"}</td>
-                </tr>
-              );
-            })()}
-          </tbody>
-        </table>
-      </Card>
-
-      <Card span={6} title="Spending habits">
-        <KV k="You usually top up on" v={habits.topWd >= 0 ? `${WD[habits.topWd]} (${habits.topWdN}×)` : "—"} />
-        <KV k="Typical gap between top-ups" v={habits.median != null ? `${Math.round(habits.median)} days` : "—"} />
-        <KV k={`Bought something within ${IMPULSE_MIN} min of topping up`} v={`${habits.impulse.length} of ${pay.data.length} top-ups`} />
-        {habits.impulse.length > 0 && (
-          <ul className="mt-2 space-y-1 text-[12.5px] text-muted">
-            {habits.impulse
-              .slice(-5)
-              .reverse()
-              .map(({ p, first, minutes }) => (
-                <li key={p.player_facing_purchase_id} className="flex justify-between gap-3">
-                  <span className="num">{f.date(p._t)}</span>
-                  <span className="truncate">
-                    {money(amountPaid(p), p.currency_code)} → {(() => { const x = vpById.get(first.transaction_id); return x ? (x.category === "Battle Pass" ? x.pass : x.name) : first.item_name; })()} <span className="text-faint">({minutes} min)</span>
-                  </span>
-                </li>
-              ))}
-          </ul>
-        )}
-      </Card>
-
-      <Card span={12} title="When you spend" hint="Top-ups and VP purchases by weekday and hour">
-        <WeekHourHeatmap times={[...pay.data, ...store.data.filter(isVP)].map((r) => r._t!).filter(Boolean)} label="purchases" />
-      </Card>
-
-      <Card span={6} title="Where your VP went">
-        <Donut data={vpWhere} format={(v) => `${n0(v)} VP`} center={<><div className="num text-xl font-medium">{n0(vpSpent)}</div><div className="text-[11px] uppercase tracking-widest text-muted">VP spent</div></>} />
-      </Card>
-      <Card span={6} title="Payment methods">
-        <Donut data={methods} format={(v) => money(v, main)} />
-        <div className="mt-4">
-          <KV k="Country on payments" v={[...new Set(pay.data.map((p) => p.country_code))].join(", ") || "—"} />
-          <KV k="Gifts sent" v={String(pay.data.filter((p) => p.recipient_id).length)} mono />
         </div>
       </Card>
 
