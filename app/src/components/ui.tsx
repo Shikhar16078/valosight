@@ -1,8 +1,10 @@
 import { animate, motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Check } from "lucide-react";
 import { Children, useEffect, useRef, type PointerEvent, type ReactNode } from "react";
 import { useSettings } from "../lib/settings";
 import { EASE_EMPH, StaggerIndex, lastShown, revealVariants, spotlight, useReveal } from "../lib/motion";
+import { useAccount } from "../lib/account";
+import { SOFT, SOFT_CSS, useSettle } from "./anim";
 
 export function Page({
   code,
@@ -20,6 +22,10 @@ export function Page({
   /** While the page's data is loading, show placeholders instead of half-computed numbers. */
   loading?: boolean;
 }) {
+  // Changing the period or the account settles the page's content (a soft dip and return), so it's clear
+  // everything below now shows something else.
+  const { range, accountId } = useAccount();
+  const grid = useSettle<HTMLDivElement>(`${JSON.stringify(range)}|${accountId}`);
   return (
     <div className="mx-auto w-full max-w-[1400px] px-4 pb-16 pt-6 sm:px-8">
       <motion.header initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.32, ease: EASE_EMPH }} className="mb-6 flex flex-wrap items-end justify-between gap-4">
@@ -43,7 +49,7 @@ export function Page({
         </div>
         {actions}
       </motion.header>
-      <div className="grid grid-cols-12 gap-4">
+      <div ref={grid} className="grid grid-cols-12 gap-4">
         {loading ? (
           <PageSkeleton />
         ) : (
@@ -113,7 +119,17 @@ export function Card({
   pad = true,
   accent = false,
   to,
+  id,
+  quick = false,
+  fill = false,
 }: {
+  /** Stretch the card's body to the card's full height (e.g. a chart that should match its row). */
+  fill?: boolean;
+  /** Anchor for "jump here" clicks (see lib/focus.ts). */
+  id?: string;
+  /** A quick opacity-only entrance instead of the blur reveal: for very tall cards that appear on a click
+   * (blurring a big layer is slow and made them feel late). */
+  quick?: boolean;
   span?: number;
   title?: ReactNode;
   hint?: ReactNode;
@@ -128,7 +144,7 @@ export function Card({
   const reveal = useReveal();
   const side = right ?? (to ? <OpenLink to={to} /> : null);
   return (
-    <motion.section {...reveal} onPointerMove={spotlight} className={`panel spot ${accent ? "corner" : ""} ${SPAN[span] ?? SPAN[12]} min-w-0 ${className}`}>
+    <motion.section {...(quick ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.22, ease: "easeOut" } } : reveal)} id={id} onPointerMove={spotlight} className={`panel spot scroll-mt-[72px] ${fill ? "flex flex-col" : ""} ${accent ? "corner" : ""} ${SPAN[span] ?? SPAN[12]} min-w-0 ${className}`}>
       {(title || side) && (
         <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-3.5">
           <div className="min-w-0">
@@ -138,7 +154,7 @@ export function Card({
           {side}
         </div>
       )}
-      <div className={pad ? "p-5" : ""}>{children}</div>
+      <div className={`${pad ? "p-5" : ""} ${fill ? "min-h-0 flex-1" : ""}`}>{children}</div>
     </motion.section>
   );
 }
@@ -170,10 +186,16 @@ export function Stat({
   tone = "default",
   span = 3,
   to,
+  onClick,
+  action,
 }: {
   label: string;
   /** A page (hash route) the whole card opens. */
   to?: string;
+  /** Makes the card a button (e.g. jump to and filter a section, or open a drawer). */
+  onClick?: () => void;
+  /** Tooltip for `onClick`, e.g. "Show every battle pass". */
+  action?: string;
   value: number | string;
   format?: (v: number) => string;
   sub?: ReactNode;
@@ -185,9 +207,10 @@ export function Stat({
   const color = { default: "text-ink", accent: "text-accent", win: "text-win", warn: "text-warn" }[tone];
   const reveal = useReveal();
   const tilt = useTilt();
-  const attention = tone === "warn" && typeof value === "number" && value > 0;
   // A card that opens a page is a real link: keyboard, middle-click and "open in new tab" all work.
+  // A card with `onClick` acts as a button (it may hold links or chips, so it can't be a real <button>).
   const Box = (to ? motion.a : motion.div) as typeof motion.a;
+  const clickable = !!to || !!onClick;
   return (
     <Box
       {...reveal}
@@ -195,10 +218,23 @@ export function Stat({
       style={tilt.style}
       whileHover={{ y: -3 }}
       href={to ? `#${to}` : undefined}
-      title={to ? `Open ${pageName(to)}` : undefined}
-      className={`panel spot group/stat relative ${attention ? "breathe" : ""} ${SPAN[span] ?? SPAN[3]} block min-w-0 px-5 py-4 hover:shadow-[var(--shadow-2)] ${to ? "cursor-pointer" : ""}`}
+      title={to ? `Open ${pageName(to)}` : action}
+      {...(onClick && {
+        role: "button",
+        tabIndex: 0,
+        onClick: (e: React.MouseEvent) => {
+          if ((e.target as HTMLElement).closest("a, button")) return; // a link or chip inside the card
+          onClick();
+        },
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+          e.preventDefault();
+          onClick();
+        },
+      })}
+      className={`panel spot group/stat relative ${SPAN[span] ?? SPAN[3]} block min-w-0 px-5 py-4 hover:shadow-[var(--shadow-2)] ${clickable ? "cursor-pointer" : ""}`}
     >
-      {to && (
+      {clickable && (
         <ArrowUpRight
           size={16}
           aria-hidden
@@ -206,7 +242,8 @@ export function Stat({
         />
       )}
       <div className="pr-6 text-[12px] font-medium uppercase tracking-[0.12em] text-muted">{label}</div>
-      <div className={`num mt-1.5 truncate text-[28px] font-medium leading-none ${color}`}>
+      {/* truncate clips at the line box; the padding (cancelled by the margin) keeps descenders like g and y. */}
+      <div className={`num -mb-1 mt-1.5 truncate pb-1 text-[28px] font-medium leading-none ${color}`}>
         {typeof value === "number" ? <CountUp value={value} format={format} id={`stat:${label}`} /> : value}
       </div>
       {extra && <div className="mt-2.5">{extra}</div>}
@@ -282,10 +319,15 @@ export function Badge({ tone = "neutral", children }: { tone?: keyof typeof TONE
 
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-line-strong px-6 py-12 text-center">
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: SOFT.in, ease: SOFT.ease }}
+      className="flex flex-col items-center justify-center rounded-xl border border-dashed border-line-strong px-6 py-12 text-center"
+    >
       <div className="font-display text-lg font-semibold">{title}</div>
       {children && <div className="mt-1 max-w-md text-muted">{children}</div>}
-    </div>
+    </motion.div>
   );
 }
 
@@ -342,5 +384,24 @@ export function KV({ k, v, mono = false }: { k: ReactNode; v: ReactNode; mono?: 
       <span className="text-muted">{k}</span>
       <span className={`text-right ${mono ? "num" : "font-medium"}`}>{v}</span>
     </div>
+  );
+}
+
+/** A toggle pill for filter rows (on: accent with a tick). */
+export function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      onClick={onClick}
+      className={`flex items-center rounded-full border px-2.5 py-0.5 text-[12.5px] transition-colors ${SOFT_CSS} ${on ? "border-accent bg-accent-soft font-medium text-accent" : "border-line text-muted hover:border-line-strong hover:text-ink"}`}
+    >
+      <span className={`grid transition-[grid-template-columns,opacity] ${SOFT_CSS} ${on ? "grid-cols-[1fr] opacity-100" : "grid-cols-[0fr] opacity-0"}`}>
+        <span className="overflow-hidden pr-1">
+          <Check size={12} />
+        </span>
+      </span>
+      {children}
+    </button>
   );
 }

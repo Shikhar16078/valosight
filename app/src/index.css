@@ -36,6 +36,9 @@
   --color-loss: var(--loss);
   --color-loss-soft: var(--loss-soft);
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Card hover timing: the same soft curve and pace as the shared animations (components/anim.tsx SOFT). */
+  --card-t: 0.5s;
+  --card-ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-emph: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -74,6 +77,10 @@ body::before {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
   }
+  /* No ring after a mouse click (see main.tsx); text fields keep theirs (.field). */
+  :root[data-input="mouse"] :focus-visible:not(input, textarea, select) {
+    outline: none;
+  }
 
   /* Cursors: a hand on anything you can click, "not allowed" on disabled controls, "help" on info-only
      items, and the plain arrow over charts: they're read by hovering (tooltips) and nothing in them is
@@ -100,13 +107,15 @@ body::before {
   [aria-busy="true"] {
     cursor: progress;
   }
-  [title]:not(button):not(a):not(input):not(select):not(svg) {
-    cursor: help;
-  }
   .recharts-surface,
   .recharts-surface *,
   .heat-cell {
     cursor: default;
+  }
+  /* Charts whose months/slices open something (MonthlyChart / Donut `onPick`). */
+  .chart-pick .recharts-surface,
+  .chart-pick .recharts-surface * {
+    cursor: pointer;
   }
   /* Recharts makes each chart focusable (arrow keys move the tooltip). A mouse click shouldn't leave the
      browser's blue focus box on it; keyboard focus still gets the normal ring from :focus-visible. */
@@ -115,14 +124,12 @@ body::before {
     outline: none;
   }
 
-  /* Tactile press on every enabled button. */
+  /* Smooth hover colours on every enabled button. No press-to-shrink: on wide rows (e.g. the Skins group
+     headers) it looked like the row was collapsing inward. */
   button:not(:disabled) {
-    transition-property: color, background-color, border-color, box-shadow, transform, opacity;
+    transition-property: color, background-color, border-color, box-shadow, opacity;
     transition-duration: 0.15s;
     transition-timing-function: var(--ease-out);
-  }
-  button:not(:disabled):active {
-    transform: scale(0.97);
   }
 }
 
@@ -142,9 +149,9 @@ body::before {
     border-radius: 14px;
     box-shadow: var(--shadow-1);
     transition:
-      border-color 0.2s var(--ease-out),
-      box-shadow 0.25s var(--ease-out),
-      transform 0.25s var(--ease-out);
+      border-color var(--card-t) var(--card-ease),
+      box-shadow var(--card-t) var(--card-ease),
+      transform var(--card-t) var(--card-ease);
   }
   .panel:hover {
     border-color: var(--line-strong);
@@ -158,7 +165,7 @@ body::before {
     border-radius: inherit;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 0.3s var(--ease-out);
+    transition: opacity var(--card-t) var(--card-ease);
     background: radial-gradient(380px circle at var(--mx, 50%) var(--my, 50%), color-mix(in oklab, var(--accent) 7%, transparent), transparent 45%);
   }
   @media (hover: hover) and (pointer: fine) {
@@ -171,40 +178,58 @@ body::before {
     display: none;
   }
 
-  /* Neon edge: a conic gradient on the border box that rotates around the card, plus a soft glow.
-     Settings → Motion & effects chooses off / on hover / always. */
+  /* Neon edge: a rotating conic ring drawn on a layer of its own (::before), so turning it on is a
+     fade, not a background swap. That keeps hover smooth and lets cards with their own background
+     (.corner) keep it. Settings → Motion & effects chooses off / on hover / always. The ring sits just
+     inside the border (inset 0), so cards with overflow-hidden show it too. */
+  :root[data-neon="hover"] .panel::before,
+  :root[data-neon="always"] .panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border-radius: calc(14px - 1px);
+    padding: 1px;
+    pointer-events: none;
+    background: conic-gradient(
+      from var(--angle),
+      var(--line) 0deg,
+      var(--accent) 60deg,
+      var(--violet) 120deg,
+      var(--info) 170deg,
+      var(--line) 220deg,
+      var(--line) 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box exclude,
+      linear-gradient(#000 0 0);
+    opacity: 0;
+    transition: opacity var(--card-t) var(--card-ease);
+    animation: neon-spin 5s linear infinite paused;
+  }
+  :root[data-neon="always"] .panel::before {
+    opacity: 1;
+    animation-duration: 8s;
+    animation-play-state: running;
+  }
+  :root[data-neon="hover"] .panel:hover::before {
+    opacity: 1;
+    animation-play-state: running;
+  }
   :root[data-neon="always"] .panel,
   :root[data-neon="hover"] .panel:hover {
     border-color: transparent;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 50%) padding-box,
-      linear-gradient(var(--panel), var(--panel)) padding-box,
-      conic-gradient(
-          from var(--angle),
-          var(--line) 0deg,
-          var(--accent) 60deg,
-          var(--violet) 120deg,
-          var(--info) 170deg,
-          var(--line) 220deg,
-          var(--line) 360deg
-        )
-        border-box;
+  }
+  :root[data-neon="always"] .panel:hover,
+  :root[data-neon="hover"] .panel:hover {
     box-shadow:
       var(--shadow-1),
       0 0 24px -10px color-mix(in oklab, var(--accent) 55%, transparent),
       0 0 40px -18px color-mix(in oklab, var(--violet) 50%, transparent);
-    animation: neon-spin 4s linear infinite;
-  }
-  :root[data-neon="always"] .panel {
-    animation-duration: 7s;
-  }
-  :root[data-neon="always"] .panel:hover {
-    animation-duration: 3s;
-  }
-
-  /* Gentle "needs attention" breathing glow. */
-  .breathe {
-    animation: breathe 3.2s ease-in-out infinite;
   }
 
   /* Raised on hover: for cards you can act on. */
@@ -232,8 +257,18 @@ body::before {
       color-mix(in oklab, var(--panel) 90%, transparent);
     box-shadow:
       var(--shadow-1),
+      inset 0 1px 0 color-mix(in oklab, var(--accent) 18%, transparent);
+  }
+
+  .panel.corner:hover {
+    border-color: color-mix(in oklab, var(--accent) 40%, var(--line));
+  }
+  :root:is([data-neon="hover"], [data-neon="always"]) .panel.corner:hover {
+    box-shadow:
+      var(--shadow-1),
       inset 0 1px 0 color-mix(in oklab, var(--accent) 18%, transparent),
-      0 18px 40px -28px color-mix(in oklab, var(--accent) 60%, transparent);
+      0 0 24px -10px color-mix(in oklab, var(--accent) 55%, transparent),
+      0 0 40px -18px color-mix(in oklab, var(--violet) 50%, transparent);
   }
 
   .skeleton {
@@ -270,15 +305,6 @@ body::before {
 @keyframes neon-spin {
   to {
     --angle: 360deg;
-  }
-}
-@keyframes breathe {
-  0%,
-  100% {
-    box-shadow: var(--shadow-1), 0 0 0 0 color-mix(in oklab, var(--warn) 0%, transparent);
-  }
-  50% {
-    box-shadow: var(--shadow-1), 0 0 26px -6px color-mix(in oklab, var(--warn) 45%, transparent);
   }
 }
 

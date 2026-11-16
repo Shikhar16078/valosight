@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Bar, BarChart, CartesianGrid, Cell, Line, ComposedChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, CartesianGrid, Cell, Line, ComposedChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { localParts, useSettings } from "../lib/settings";
 import { useInView } from "../lib/motion";
@@ -64,21 +64,54 @@ export function MonthlyChart({
   series,
   height = 260,
   yFormat = (v: number) => v.toLocaleString("en"),
+  onPick,
 }: {
   data: ({ month: string } & Record<string, number | string | null>)[];
   series: SeriesDef[];
   height?: number;
   yFormat?: (v: number) => string;
+  /** Makes each month clickable (e.g. filter a table to that month). */
+  onPick?: (month: string) => void;
 }) {
   const { f } = useSettings();
   const [ref, seen] = useInView<HTMLDivElement>();
   const anim = !useReducedMotion();
   const hasLine = series.some((s) => s.line && (s.axis ?? "r") === "r");
   return (
-    <div ref={ref} style={{ height }}>
+    <div>
+    {/* A legend whenever the chart uses more than one colour (bars as squares, lines as a line with a dot). */}
+    {series.length > 1 && (
+      <ul className="mb-2 flex flex-wrap justify-end gap-x-4 gap-y-1 text-[12px] text-muted">
+        {series.map((s) => (
+          <li key={s.key} className="flex items-center gap-1.5">
+            {s.line ? (
+              <span className="relative h-2.5 w-4" aria-hidden>
+                <span className="absolute inset-x-0 top-1/2 h-[2px] -translate-y-1/2 rounded" style={{ background: s.color }} />
+                <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ background: s.color }} />
+              </span>
+            ) : (
+              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} aria-hidden />
+            )}
+            {s.label}
+          </li>
+        ))}
+      </ul>
+    )}
+    <div ref={ref} style={{ height }} className={onPick ? "chart-pick" : undefined}>
       {seen && (
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data} margin={{ top: 8, right: hasLine ? 4 : 8, left: -8, bottom: 0 }}>
+        <ComposedChart
+          onClick={
+            onPick &&
+            ((st) => {
+              // No active bar (a click in the margin) gives null; Number(null) would be 0, the first month.
+              const i = st?.activeTooltipIndex == null ? NaN : Number(st.activeTooltipIndex);
+              const m = Number.isInteger(i) ? data[i]?.month : st?.activeLabel != null ? String(st.activeLabel) : undefined;
+              if (m) onPick(m);
+            })
+          }
+          data={data}
+          margin={{ top: 8, right: hasLine ? 4 : 8, left: -8, bottom: 0 }}>
           <CartesianGrid vertical={false} strokeDasharray="2 4" />
           <XAxis dataKey="month" tickFormatter={f.monthLabel} tickLine={false} axisLine={false} minTickGap={18} />
           <YAxis yAxisId="l" tickFormatter={yFormat} tickLine={false} axisLine={false} width={56} />
@@ -121,29 +154,11 @@ export function MonthlyChart({
       </ResponsiveContainer>
       )}
     </div>
-  );
-}
-
-export function HBars({ data, format = (v) => v.toLocaleString("en"), color = C.accent, height }: { data: { label: string; value: number }[]; format?: (v: number) => string; color?: string; height?: number }) {
-  const [ref, seen] = useInView<HTMLDivElement>();
-  const anim = !useReducedMotion();
-  return (
-    <div ref={ref} style={{ height: height ?? Math.max(120, data.length * 34) }}>
-      {seen && (
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 40, left: 0, bottom: 0 }}>
-          <XAxis type="number" hide />
-          <YAxis type="category" dataKey="label" width={150} tickLine={false} axisLine={false} tick={{ fontSize: 12.5, fill: "var(--text)", fontFamily: "IBM Plex Sans" }} />
-          <Tooltip cursor={{ fill: "var(--panel-3)", opacity: 0.6 }} content={({ active, payload }) => (active && payload?.length ? <TooltipBox title={payload[0].payload.label} rows={[{ label: "Total", value: format(Number(payload[0].value)) }]} /> : null)} />
-          <Bar dataKey="value" fill={color} radius={[0, 4, 4, 0]} maxBarSize={20} isAnimationActive={anim} animationDuration={600} animationEasing="ease-out" label={{ position: "right", formatter: (v: any) => format(Number(v)), fill: "var(--muted)", fontSize: 11.5, fontFamily: "IBM Plex Mono" }} />
-        </BarChart>
-      </ResponsiveContainer>
-      )}
     </div>
   );
 }
 
-export function Donut({ data, format = (v) => v.toLocaleString("en"), center }: { data: { label: string; value: number }[]; format?: (v: number) => string; center?: ReactNode }) {
+export function Donut({ data, format = (v) => v.toLocaleString("en"), center, onPick }: { data: { label: string; value: number }[]; format?: (v: number) => string; center?: ReactNode; /** Makes slices and legend rows clickable. */ onPick?: (label: string) => void }) {
   const total = data.reduce((a, b) => a + b.value, 0);
   const [hover, setHover] = useState<number | null>(null);
   const h = hover != null ? data[hover] : null;
@@ -154,7 +169,7 @@ export function Donut({ data, format = (v) => v.toLocaleString("en"), center }: 
   return (
     <div className="flex flex-wrap items-center gap-6">
       {/* Clear the hover only when leaving the ring, not in the gaps between slices (that made the centre flicker). */}
-      <div ref={ref} className="relative h-[180px] w-[180px] shrink-0" onMouseLeave={() => setHover(null)}>
+      <div ref={ref} className={`relative h-[180px] w-[180px] shrink-0 ${onPick ? "chart-pick" : ""}`} onMouseLeave={() => setHover(null)}>
         {seen && (
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -172,6 +187,7 @@ export function Donut({ data, format = (v) => v.toLocaleString("en"), center }: 
               animationDuration={800}
               animationEasing="ease-out"
               onMouseEnter={(_, i) => setHover(i)}
+              onClick={onPick && ((_, i) => onPick(data[i].label))}
             >
               {data.map((_, i) => (
                 <Cell
@@ -221,6 +237,7 @@ export function Donut({ data, format = (v) => v.toLocaleString("en"), center }: 
             key={d.label}
             onMouseEnter={() => setHover(i)}
             onMouseLeave={() => setHover(null)}
+            {...(onPick && { role: "button", tabIndex: 0, title: `Show ${d.label}`, onClick: () => onPick(d.label), onKeyDown: (e: React.KeyboardEvent) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onPick(d.label)) })}
             className={`flex items-center justify-between gap-3 rounded-md px-2 py-1 text-[13px] transition-[background-color,opacity] duration-300 ${hover === i ? "bg-panel-2" : ""} ${hover != null && hover !== i ? "opacity-50" : ""}`}
           >
             <span className="flex items-center gap-2">

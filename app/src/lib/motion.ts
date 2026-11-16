@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type PointerEvent } from "react";
 
 /** Motion tokens (keep in step with --ease-* in index.css). */
-export const EASE_OUT = [0.2, 0.8, 0.2, 1] as const;
 export const EASE_EMPH = [0.16, 1, 0.3, 1] as const;
 
 /** Position of a card within its page, so cards above the fold enter one after another. */

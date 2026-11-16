@@ -353,10 +353,10 @@ svg.lucide {
 .btn-primary {
   color: #fff;
   background: linear-gradient(110deg, var(--accent), color-mix(in oklab, var(--accent) 65%, var(--violet)));
-  box-shadow: 0 8px 24px -10px var(--accent);
+  box-shadow: 0 4px 14px -8px color-mix(in oklab, var(--accent) 55%, transparent);
 }
 .btn-primary:hover {
-  box-shadow: 0 12px 30px -10px var(--accent);
+  box-shadow: 0 6px 18px -8px color-mix(in oklab, var(--accent) 70%, transparent);
 }
 .btn-ghost {
   color: var(--text);
