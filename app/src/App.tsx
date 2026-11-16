@@ -1,7 +1,7 @@
 import { AnimatePresence, MotionConfig, motion, useScroll, useSpring } from "motion/react";
 import { PrivacyProvider, PrivacyToggle, Sens, useHideOn, usePrivacy } from "./lib/privacy";
 import { APP_NAME, Logo, Wordmark } from "./components/Logo";
-import { CalendarRange, Check, ChevronDown, Database, FlaskConical, Gavel, House, LayoutDashboard, LifeBuoy, Settings, Users, Shield, Sparkles, Swords, Upload, Wallet } from "lucide-react";
+import { CalendarRange, Check, Database, FlaskConical, Gavel, House, LayoutDashboard, LifeBuoy, Monitor, Palette, Settings, Users, Shield, Sparkles, Swords, Upload, Wallet } from "lucide-react";
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { AccountProvider, useAccount, type Range } from "./lib/account";
 import { SettingsProvider, useSettings } from "./lib/settings";
@@ -12,6 +12,7 @@ import { Loading, PageSkeleton } from "./components/ui";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { lazyRetry } from "./lib/lazy-retry";
 import { Ambient } from "./components/Ambient";
+import { THEMES, themeById } from "./lib/themes";
 import { Footer } from "./components/Footer";
 import { FxProvider } from "./lib/convert";
 import { api } from "./lib/api";
@@ -160,7 +161,7 @@ function AccountSwitcher({ go }: { go: (v: ViewId) => void }) {
         title={`${name} · ${accounts.length} account${accounts.length === 1 ? "" : "s"}`}
         className={`group relative flex h-9 w-9 items-center justify-center rounded-full p-[2px] transition-transform duration-200 hover:scale-105 ${open ? "bg-[linear-gradient(135deg,var(--accent),var(--violet))]" : "bg-line-strong hover:bg-[linear-gradient(135deg,var(--accent),var(--violet))]"}`}
       >
-        <span className="flex h-full w-full items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--accent),var(--violet))] font-display text-[12px] font-bold text-white ring-2 ring-[var(--bg)]">
+        <span className="flex h-full w-full items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--accent),var(--violet))] font-display text-[12px] font-bold text-[var(--on-accent)] ring-2 ring-[var(--bg)]">
           {initials(name)}
         </span>
         {accounts.length > 1 && (
@@ -249,15 +250,27 @@ function ScopePill() {
   const chip = (on: boolean) => `num rounded-full border px-2.5 py-1 text-[12.5px] ${on ? "border-accent bg-accent-soft font-medium text-accent" : "border-line text-muted hover:border-line-strong hover:text-ink"}`;
   return (
     <div ref={ref} className="relative">
+      {/* Icon only (the top bar is tight): the period shows on hover, and a dot marks a filter in force. */}
       <button
         onClick={() => setOpen(!open)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className={`flex h-8 items-center gap-2 rounded-full border px-3 text-[13px] ${val !== "all" ? "border-accent/50 bg-accent-soft" : "border-line bg-panel-2 hover:border-line-strong hover:bg-panel-3"}`}
+        aria-label={`Period: ${label}`}
+        title={`Period: ${label}`}
+        className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ${val !== "all" ? "bg-accent-soft text-accent" : open ? "bg-panel-2 text-ink" : "text-muted hover:bg-panel-2 hover:text-ink"}`}
       >
-        <CalendarRange size={14} className={val !== "all" ? "text-accent" : "text-muted"} />
-        <span className="whitespace-nowrap font-medium">{label}</span>
-        <ChevronDown size={14} className={`text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+        <CalendarRange size={16} />
+        <AnimatePresence>
+          {val !== "all" && (
+            <motion.span
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0 }}
+              transition={{ duration: 0.2, ease: EASE_EMPH }}
+              className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full border-2 border-[var(--bg)] bg-accent"
+            />
+          )}
+        </AnimatePresence>
       </button>
       <AnimatePresence>
         {open && (
@@ -271,7 +284,9 @@ function ScopePill() {
             className="pop absolute right-0 top-full z-50 mt-2 w-[300px] origin-top-right space-y-3 p-3"
           >
             <div>
-              <div className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">Period</div>
+              <div className="mb-1.5 flex items-baseline justify-between gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
+                Period <span className="num normal-case tracking-normal text-faint">{label}</span>
+              </div>
               <div className="flex flex-wrap gap-1.5">
                 {PERIODS.map((p) => (
                   <button key={p.v} aria-pressed={val === p.v} onClick={() => set(p.v)} className={chip(val === p.v)}>
@@ -285,6 +300,66 @@ function ScopePill() {
                 ))}
               </div>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Quick theme switch in the top bar: dark, light, or follow the device. Settings has the full previews. */
+function ThemeMenu() {
+  const { settings, setTheme } = useSettings();
+  const [open, setOpen] = useState(false);
+  const ref = useClickAway<HTMLDivElement>(open, () => setOpen(false));
+  const current = themeById(settings.theme)?.name ?? "Match device";
+  const row = (on: boolean) =>
+    `flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors duration-200 ${on ? "bg-accent-soft font-medium text-accent" : "text-ink hover:bg-panel-2"}`;
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={`Theme: ${current}`}
+        title={`Theme: ${current}`}
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ${open ? "bg-panel-2 text-ink" : "text-muted hover:bg-panel-2 hover:text-ink"}`}
+      >
+        <Palette size={16} />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="dialog"
+            aria-label="Theme"
+            initial={{ opacity: 0, y: -4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.98 }}
+            transition={{ duration: 0.16, ease: EASE_EMPH }}
+            className="pop scroll-thin absolute right-0 top-full z-50 mt-2 max-h-[min(560px,calc(100dvh-5rem))] w-[240px] origin-top-right overflow-y-auto p-2"
+          >
+            <button type="button" aria-pressed={settings.theme === "system"} onClick={() => setTheme("system")} className={row(settings.theme === "system")}>
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-line text-muted">
+                <Monitor size={13} />
+              </span>
+              <span className="flex-1">Match device</span>
+              {settings.theme === "system" && <Check size={14} />}
+            </button>
+            {(["dark", "light"] as const).map((mode) => (
+              <div key={mode} className="mt-2">
+                <div className="px-2 pb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">{mode === "dark" ? "Dark" : "Light"}</div>
+                {THEMES.filter((t) => t.mode === mode).map((t) => (
+                  <button key={t.id} type="button" aria-pressed={settings.theme === t.id} onClick={() => setTheme(t.id)} className={row(settings.theme === t.id)}>
+                    {/* The theme's own colours: the swatch carries its palette attributes (lib/themes.ts). */}
+                    <span data-theme={t.mode} data-palette={t.id} className="relative h-6 w-6 shrink-0 overflow-hidden rounded-md border border-line bg-[var(--bg)]">
+                      <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{t.name}</span>
+                    {settings.theme === t.id && <Check size={14} />}
+                  </button>
+                ))}
+              </div>
+            ))}
           </motion.div>
         )}
       </AnimatePresence>
@@ -415,12 +490,13 @@ function TopBar({ view, items, go, empty }: { view: ViewId; items: typeof NAV; g
           {!empty && <PrivacyToggle compact />}
           {!empty && <Freshness />}
           {!empty && !NO_SCOPE.includes(view) && <ScopePill />}
+          <ThemeMenu />
           {/* Back to the home page, styled like its "Open the app" button so the two products match. Carries the
               app's theme. The avatar stays at the far right. */}
           <a
             href={homeUrl(settings)}
             title={`${APP_NAME} home page`}
-            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[10px] bg-[linear-gradient(110deg,var(--accent),color-mix(in_oklab,var(--accent)_65%,var(--violet)))] px-2.5 text-[14px] font-semibold text-white shadow-[0_4px_14px_-8px_color-mix(in_oklab,var(--accent)_55%,transparent)] transition-[transform,box-shadow] duration-200 hover:-translate-y-px hover:shadow-[0_6px_18px_-8px_color-mix(in_oklab,var(--accent)_70%,transparent)] sm:px-3.5"
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[10px] bg-[linear-gradient(110deg,var(--accent),color-mix(in_oklab,var(--accent)_65%,var(--violet)))] px-2.5 text-[14px] font-semibold text-[var(--on-accent)] shadow-[0_4px_14px_-8px_color-mix(in_oklab,var(--accent)_55%,transparent)] transition-[transform,box-shadow] duration-200 hover:-translate-y-px hover:shadow-[0_6px_18px_-8px_color-mix(in_oklab,var(--accent)_70%,transparent)] sm:px-3.5"
           >
             <House size={16} />
             <span className="hidden sm:inline">Back to home</span>

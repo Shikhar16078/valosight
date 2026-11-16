@@ -354,7 +354,7 @@ svg.lucide {
   border-radius: 10px;
 }
 .btn-primary {
-  color: #fff;
+  color: var(--on-accent, #fff);
   background: linear-gradient(110deg, var(--accent), color-mix(in oklab, var(--accent) 65%, var(--violet)));
   box-shadow: 0 4px 14px -8px color-mix(in oklab, var(--accent) 55%, transparent);
 }
@@ -868,7 +868,7 @@ svg.lucide {
   height: 40px;
   border-radius: 12px;
   font: 700 18px var(--font-display);
-  color: #fff;
+  color: var(--on-accent, #fff);
   background: linear-gradient(135deg, var(--accent), var(--violet));
   box-shadow: 0 8px 20px -10px var(--accent);
 }

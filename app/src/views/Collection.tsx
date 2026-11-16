@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useDateGuard } from "../lib/privacy-dates";
 import { Sens, usePrivacy } from "../lib/privacy";
-import { ChevronDown, ChevronRight, ChevronsUpDown, Search, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Search, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAccount, useRecords } from "../lib/account";
 import { localParts, useSettings } from "../lib/settings";
@@ -53,6 +53,9 @@ const PREFS_KEY = "riotvault.collection";
 /** Position in a known order; unknown values ("—", a weapon Riot adds later) go last. */
 const rank = (list: readonly string[], v: string) => (list.includes(v) ? list.indexOf(v) : list.length);
 
+/** Other purchases per page. */
+const OTHER_PAGE = 10;
+
 const sourceOf = (where: string) => (where === "Night Market" ? "Night Market" : where.startsWith("Bundle") || where === "Full Bundle" ? "Bundle" : "Store");
 
 function loadPrefs(): { group: GroupBy; sort: SortBy } {
@@ -99,6 +102,7 @@ export function Collection() {
   const [vpPreset, setVpPreset] = useState<Preset<VPItem> | null>(null);
   const [upPreset, setUpPreset] = useState<Preset<Upgrade> | null>(null);
   const [otherCur, setOtherCur] = useState<string | null>(null);
+  const [otherPage, setOtherPage] = useState(0);
   const [upView, setUpView] = useState<"skin" | "all">("skin");
 
   // Riot's skin catalogue (lib/skins.ts): exact weapons, editions and pictures. Until it loads, or if it's
@@ -348,6 +352,16 @@ export function Collection() {
   const otherShown = useMemo(() => other.filter((o) => !otherCur || o.currency === otherCur), [other, otherCur]);
   const [otherId, setOtherId] = useState<string | null>(null);
   const otherAt = otherId ? otherShown.findIndex((o) => o.r.transaction_id === otherId) : -1;
+  // Other purchases show a page at a time (some accounts have hundreds). A filter starts again at page 1, and
+  // stepping through the Inspect window turns the page along with it, so "Show in list" lands on the item.
+  const otherPages = Math.max(1, Math.ceil(otherShown.length / OTHER_PAGE));
+  const otherPageNow = Math.min(otherPage, otherPages - 1);
+  useEffect(() => {
+    setOtherPage(0);
+  }, [otherCur]);
+  useEffect(() => {
+    if (otherAt >= 0) setOtherPage(Math.floor(otherAt / OTHER_PAGE));
+  }, [otherAt]);
   const otherOpen = otherAt >= 0 ? otherShown[otherAt] : null;
   // While an Inspect window is open, fetch the pictures of the items ← / → lead to, so they show at once.
   // Sizes match what the windows ask for (SkinDetail's stage, PassInspect's reward tiles, OtherInspect's stage).
@@ -829,9 +843,28 @@ export function Collection() {
               );
             })}
           </div>
-          <Swap k={otherCur ?? "all"}>
+          {/* Same place and style as the tables' pager (components/DataTable.tsx): top right, above the rows. */}
+          {otherPages > 1 && (
+            <div className="-mx-2 mb-1 flex items-center justify-end gap-x-5 border-b border-line px-2 pb-2 text-[12.5px] text-muted">
+              <span className="num">
+                {otherPageNow * OTHER_PAGE + 1}–{Math.min(otherShown.length, (otherPageNow + 1) * OTHER_PAGE)} of {otherShown.length}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <button disabled={otherPageNow === 0} onClick={() => setOtherPage(otherPageNow - 1)} className="rounded-md border border-line p-1 disabled:opacity-30" aria-label="Previous page">
+                  <ChevronLeft size={15} />
+                </button>
+                <span className="num px-1">
+                  {otherPageNow + 1} / {otherPages}
+                </span>
+                <button disabled={otherPageNow >= otherPages - 1} onClick={() => setOtherPage(otherPageNow + 1)} className="rounded-md border border-line p-1 disabled:opacity-30" aria-label="Next page">
+                  <ChevronRight size={15} />
+                </button>
+              </span>
+            </div>
+          )}
+          <Swap k={`${otherCur ?? "all"}:${otherPageNow}`}>
           <ul className="divide-y divide-line">
-            {otherShown.map((o) => {
+            {otherShown.slice(otherPageNow * OTHER_PAGE, (otherPageNow + 1) * OTHER_PAGE).map((o) => {
               const u = currencyUnit(o.currency);
               return (
                 <li key={o.r.transaction_id}>
@@ -1183,7 +1216,7 @@ function ChipGroup({ label, hint, children }: { label: string; hint?: string; ch
  */
 function OtherThumb({ item, currency }: { item: string | null | undefined; currency: string | null | undefined }) {
   return (
-    <span className="relative h-11 w-11 overflow-hidden rounded-lg bg-panel-2/60">
+    <span className="art-backing relative h-11 w-11 overflow-hidden rounded-lg bg-panel-2/60">
       {item ? <SkinImage src={item} size="sm" className="absolute inset-0 h-full w-full p-1" /> : <SkinImage src={currency} size="xs" className="absolute inset-0 h-full w-full p-2.5 opacity-50" />}
     </span>
   );

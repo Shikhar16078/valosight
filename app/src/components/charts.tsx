@@ -160,7 +160,7 @@ export function CalendarHeatmap({ times, years, label = "matches" }: { times: st
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {avail.map((yy) => (
-          <button key={yy} onClick={() => setYear(yy)} className={`num rounded-md px-2 py-0.5 text-[12.5px] ${yy === y ? "bg-accent text-white" : "text-muted hover:bg-panel-2"}`}>
+          <button key={yy} onClick={() => setYear(yy)} className={`num rounded-md px-2 py-0.5 text-[12.5px] ${yy === y ? "bg-accent text-[var(--on-accent)]" : "text-muted hover:bg-panel-2"}`}>
             {yy}
           </button>
         ))}

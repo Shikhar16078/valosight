@@ -109,7 +109,7 @@ export function Imports({ onImported }: { onImported: (accountId: number) => voi
                 <div className="mt-3 font-display text-xl font-semibold">Drop your Riot data export here</div>
                 <div className="mt-1 text-muted">A .zip file, an extracted folder, or a folder holding several accounts' exports</div>
                 <div className="mt-5 flex flex-wrap justify-center gap-3">
-                  <button onClick={() => zipRef.current?.click()} className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 font-medium text-white hover:brightness-110">
+                  <button onClick={() => zipRef.current?.click()} className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 font-medium text-[var(--on-accent)] hover:brightness-110">
                     <FileArchive size={16} /> Choose .zip
                   </button>
                   <button onClick={() => dirRef.current?.click()} className="flex items-center gap-2 rounded-lg border border-line-strong px-4 py-2 font-medium hover:bg-panel-2">
@@ -171,7 +171,7 @@ export function Imports({ onImported }: { onImported: (accountId: number) => voi
                 <div className="font-display text-xl font-semibold"><Sens>{pv.name(r.username)}</Sens></div>
                 {r.new_account ? <Badge tone="info">new account added</Badge> : <Badge>existing account updated</Badge>}
                 {r.already_imported && <Badge tone="warn">this exact export was imported before</Badge>}
-                <button onClick={() => onImported(r.account_id)} className="ml-auto rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-white">
+                <button onClick={() => onImported(r.account_id)} className="ml-auto rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-[var(--on-accent)]">
                   Open dashboard →
                 </button>
               </div>
@@ -311,7 +311,7 @@ function PasswordPrompt({ label, wrong, onSubmit, onCancel }: { label: string; w
               placeholder="Password"
               className={`field min-w-[220px] flex-1 rounded-lg border bg-panel-2 px-3 py-2 outline-none sm:max-w-sm ${wrong ? "border-loss" : "border-line"}`}
             />
-            <button type="submit" disabled={!pw} className="rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-white disabled:opacity-40">
+            <button type="submit" disabled={!pw} className="rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-[var(--on-accent)] disabled:opacity-40">
               Unlock and import
             </button>
             <button type="button" onClick={onCancel} className="rounded-lg border border-line px-3 py-2 text-[13px] text-muted hover:text-ink">

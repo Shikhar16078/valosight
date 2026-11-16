@@ -90,6 +90,7 @@ After an app change: build, then check it in the browser (pages load, no console
     - light: paper, glacier, sage, sunflower, blossom
   - Colours live in `index.css` under `[data-palette="id"]`; depth/grain under `[data-theme="dark|light"]` on `<html>`.
   - Every palette must define the full colour set, including `--loss`, which is always red (losses and danger never use the brand accent).
+  - Text on solid accent fills uses `--on-accent` (`text-[var(--on-accent)]`, never `text-white`): white by default, dark ink where the accent is too bright for white (Viper, Ember). Palette targets (checked 2026-11-16 for all 10): button text ≥ 3.5, semantic colours ≥ 4.5 as text on panel-2, `--loss` never the same colour as `--accent`, `--line` still visible on panel-3.
   - `settings.theme` is a palette id, or `system`/`dark`/`light` combined with `darkTheme`/`lightTheme`.
   - Switch themes only via `setTheme(theme)`. It plays a calm 0.9 s dissolve (View Transitions: the new theme fades in over the old one; KsK rejected the circular reveal as unprofessional), with a colour cross-fade fallback, and respects reduced motion. The landing page uses the same dissolve.
 - Effects (Settings → Motion & effects):

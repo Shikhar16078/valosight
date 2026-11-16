@@ -7,6 +7,8 @@
    --loss stays red in every theme so a loss never looks like the brand colour. */
 :root,
 [data-theme="light"] {
+  /* Text on solid accent fills (buttons): white unless a palette\'s accent is too bright for it. */
+  --on-accent: #ffffff;
   --shadow-1: 0 1px 2px rgba(20, 23, 28, 0.06);
   --shadow-2: 0 10px 30px -12px rgba(20, 23, 28, 0.18), 0 1px 2px rgba(20, 23, 28, 0.06);
   --shadow-3: 0 0 0 1px var(--line), 0 24px 48px -16px rgba(20, 23, 28, 0.25);
@@ -16,6 +18,7 @@
 }
 
 [data-theme="dark"] {
+  --on-accent: #ffffff;
   --shadow-1: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 12px 28px -10px rgba(0, 0, 0, 0.65);
   --shadow-3: 0 0 0 1px var(--line-strong), 0 24px 48px -12px rgba(0, 0, 0, 0.7);
@@ -34,23 +37,23 @@
   --panel: #14141b;
   --panel-2: #1a1a22;
   --panel-3: #22222c;
-  --line: #24242e;
+  --line: #2a2a35;
   --line-strong: #353542;
   --text: #ececf1;
   --muted: #9a9cab;
   --faint: #7d8594;
-  --accent: #ff5a4e;
-  --accent-soft: rgba(255, 90, 78, 0.12);
+  --accent: #f44e42;
+  --accent-soft: rgba(244, 78, 66, 0.12);
   --win: #2fd1bd;
   --win-soft: rgba(47, 209, 189, 0.12);
   --warn: #f2b33d;
   --warn-soft: rgba(242, 179, 61, 0.14);
   --info: #6d9cff;
   --info-soft: rgba(109, 156, 255, 0.12);
-  --violet: #8b74ff;
-  --loss: #ff5a4e;
-  --loss-soft: rgba(255, 90, 78, 0.12);
-  --aurora-1: rgba(255, 90, 78, 0.15);
+  --violet: #a66bff;
+  --loss: #ff4766;
+  --loss-soft: rgba(255, 71, 102, 0.12);
+  --aurora-1: rgba(244, 78, 66, 0.15);
   --aurora-2: rgba(124, 92, 255, 0.11);
 }
 
@@ -59,20 +62,20 @@
   --panel: #0e1422;
   --panel-2: #131a2b;
   --panel-3: #1a2338;
-  --line: #1c2538;
+  --line: #222c44;
   --line-strong: #2b3754;
   --text: #e6edf8;
   --muted: #93a1bd;
   --faint: #71809c;
-  --accent: #4f8cff;
-  --accent-soft: rgba(79, 140, 255, 0.12);
-  --win: #2fd1bd;
-  --win-soft: rgba(47, 209, 189, 0.12);
+  --accent: #4483ff;
+  --accent-soft: rgba(68, 131, 255, 0.12);
+  --win: #3ddc97;
+  --win-soft: rgba(61, 220, 151, 0.12);
   --warn: #f2b33d;
   --warn-soft: rgba(242, 179, 61, 0.14);
   --info: #38d0f5;
   --info-soft: rgba(56, 208, 245, 0.12);
-  --violet: #9b7bff;
+  --violet: #b48cff;
   --loss: #ff5c74;
   --loss-soft: rgba(255, 92, 116, 0.12);
   --aurora-1: rgba(47, 107, 255, 0.15);
@@ -84,24 +87,25 @@
   --panel: #0e1612;
   --panel-2: #131d18;
   --panel-3: #1a271f;
-  --line: #1b2820;
-  --line-strong: #2a3c31;
+  --line: #22352a;
+  --line-strong: #30473a;
   --text: #e4f3ea;
   --muted: #8fa89a;
   --faint: #6f8a7c;
   --accent: #3ddc84;
   --accent-soft: rgba(61, 220, 132, 0.12);
-  --win: #38d0f0;
-  --win-soft: rgba(56, 208, 240, 0.12);
+  --win: #7fd8ff;
+  --win-soft: rgba(127, 216, 255, 0.12);
   --warn: #f2c23d;
   --warn-soft: rgba(242, 194, 61, 0.14);
-  --info: #6d9cff;
-  --info-soft: rgba(109, 156, 255, 0.12);
+  --info: #5b8cff;
+  --info-soft: rgba(91, 140, 255, 0.12);
   --violet: #b18cff;
   --loss: #ff5c6c;
   --loss-soft: rgba(255, 92, 108, 0.12);
   --aurora-1: rgba(31, 191, 106, 0.15);
   --aurora-2: rgba(10, 165, 160, 0.11);
+  --on-accent: #04140b;
 }
 
 [data-palette="ember"] {
@@ -109,8 +113,8 @@
   --panel: #18120f;
   --panel-2: #1f1814;
   --panel-3: #29201a;
-  --line: #2b211b;
-  --line-strong: #3f3128;
+  --line: #3a2d25;
+  --line-strong: #4d3c31;
   --text: #f5ece6;
   --muted: #ab9c92;
   --faint: #8a7b71;
@@ -123,10 +127,11 @@
   --info: #6d9cff;
   --info-soft: rgba(109, 156, 255, 0.12);
   --violet: #c08cff;
-  --loss: #ff4d6a;
-  --loss-soft: rgba(255, 77, 106, 0.12);
+  --loss: #f7457a;
+  --loss-soft: rgba(247, 69, 122, 0.12);
   --aurora-1: rgba(255, 106, 43, 0.15);
-  --aurora-2: rgba(255, 61, 94, 0.11);
+  --aurora-2: rgba(255, 140, 50, 0.09);
+  --on-accent: #1c0f07;
 }
 
 [data-palette="nebula"] {
@@ -134,13 +139,13 @@
   --panel: #151021;
   --panel-2: #1b1529;
   --panel-3: #241c36;
-  --line: #251d37;
+  --line: #2a2140;
   --line-strong: #382c52;
   --text: #efe9fb;
   --muted: #a79bc2;
   --faint: #8578a3;
-  --accent: #c06bff;
-  --accent-soft: rgba(192, 107, 255, 0.12);
+  --accent: #ad5ef7;
+  --accent-soft: rgba(173, 94, 247, 0.12);
   --win: #2fd1bd;
   --win-soft: rgba(47, 209, 189, 0.12);
   --warn: #f2b33d;
@@ -148,34 +153,34 @@
   --info: #6d9cff;
   --info-soft: rgba(109, 156, 255, 0.12);
   --violet: #ff6bc6;
-  --loss: #ff5c7a;
-  --loss-soft: rgba(255, 92, 122, 0.12);
+  --loss: #ff5d5d;
+  --loss-soft: rgba(255, 93, 93, 0.12);
   --aurora-1: rgba(162, 60, 255, 0.15);
   --aurora-2: rgba(255, 63, 164, 0.11);
 }
 
 [data-palette="paper"] {
-  --bg: #f5f4f8;
+  --bg: #f6f4f1;
   --panel: #ffffff;
-  --panel-2: #f6f5f9;
-  --panel-3: #eeedf3;
-  --line: #e4e2ea;
-  --line-strong: #cfccd8;
+  --panel-2: #f7f5f2;
+  --panel-3: #efece7;
+  --line: #e6e2dc;
+  --line-strong: #d1ccc4;
   --text: #15161b;
-  --muted: #5f6370;
-  --faint: #6f7680;
-  --accent: #d42f25;
-  --accent-soft: rgba(212, 47, 37, 0.1);
-  --win: #0b7a70;
-  --win-soft: rgba(11, 122, 112, 0.12);
+  --muted: #5c5a63;
+  --faint: #6b6b74;
+  --accent: #c62a20;
+  --accent-soft: rgba(198, 42, 32, 0.1);
+  --win: #0a6e66;
+  --win-soft: rgba(10, 110, 102, 0.12);
   --warn: #8f5f00;
   --warn-soft: rgba(143, 95, 0, 0.12);
-  --info: #3a6fd8;
-  --info-soft: rgba(58, 111, 216, 0.1);
+  --info: #2c60c8;
+  --info-soft: rgba(44, 96, 200, 0.1);
   --violet: #6d4fe0;
-  --loss: #d42f25;
-  --loss-soft: rgba(212, 47, 37, 0.1);
-  --aurora-1: rgba(229, 57, 47, 0.09);
+  --loss: #9e1b1b;
+  --loss-soft: rgba(158, 27, 27, 0.1);
+  --aurora-1: rgba(198, 42, 32, 0.09);
   --aurora-2: rgba(109, 79, 224, 0.07);
 }
 
@@ -189,23 +194,23 @@
   --text: #0f1724;
   --muted: #56657a;
   --faint: #677589;
-  --accent: #1f6fd6;
-  --accent-soft: rgba(31, 111, 214, 0.1);
-  --win: #0b7a70;
-  --win-soft: rgba(11, 122, 112, 0.12);
+  --accent: #1b66cc;
+  --accent-soft: rgba(27, 102, 204, 0.1);
+  --win: #167a45;
+  --win-soft: rgba(22, 122, 69, 0.12);
   --warn: #8f5f00;
   --warn-soft: rgba(143, 95, 0, 0.12);
   --info: #0e7490;
   --info-soft: rgba(14, 116, 144, 0.1);
   --violet: #6d4fe0;
-  --loss: #d0314a;
-  --loss-soft: rgba(208, 49, 74, 0.1);
+  --loss: #b8283f;
+  --loss-soft: rgba(184, 40, 63, 0.1);
   --aurora-1: rgba(59, 130, 246, 0.09);
   --aurora-2: rgba(6, 182, 212, 0.07);
 }
 
 [data-palette="sage"] {
-  --bg: #f2f6f2;
+  --bg: #ecf2ed;
   --panel: #ffffff;
   --panel-2: #f4f8f4;
   --panel-3: #e8f0e9;
@@ -214,17 +219,17 @@
   --text: #121a14;
   --muted: #57675b;
   --faint: #67786b;
-  --accent: #2a7d4f;
-  --accent-soft: rgba(42, 125, 79, 0.1);
+  --accent: #25744a;
+  --accent-soft: rgba(37, 116, 74, 0.1);
   --win: #0e6f86;
   --win-soft: rgba(14, 111, 134, 0.12);
   --warn: #8f5f00;
   --warn-soft: rgba(143, 95, 0, 0.12);
-  --info: #3a6fd8;
-  --info-soft: rgba(58, 111, 216, 0.1);
+  --info: #2c63bf;
+  --info-soft: rgba(44, 99, 191, 0.1);
   --violet: #6d4fe0;
-  --loss: #c7344a;
-  --loss-soft: rgba(199, 52, 74, 0.1);
+  --loss: #bf2f45;
+  --loss-soft: rgba(191, 47, 69, 0.1);
   --aurora-1: rgba(63, 166, 107, 0.09);
   --aurora-2: rgba(127, 178, 74, 0.07);
 }
@@ -239,14 +244,14 @@
   --text: #1d1708;
   --muted: #6b6249;
   --faint: #7a705a;
-  --accent: #a86400;
-  --accent-soft: rgba(168, 100, 0, 0.1);
-  --win: #0b7a70;
-  --win-soft: rgba(11, 122, 112, 0.12);
-  --warn: #c2410c;
-  --warn-soft: rgba(194, 65, 12, 0.12);
-  --info: #3a6fd8;
-  --info-soft: rgba(58, 111, 216, 0.1);
+  --accent: #9c5d00;
+  --accent-soft: rgba(232, 160, 20, 0.14);
+  --win: #066a61;
+  --win-soft: rgba(6, 106, 97, 0.12);
+  --warn: #b03f0a;
+  --warn-soft: rgba(176, 63, 10, 0.12);
+  --info: #2f63c8;
+  --info-soft: rgba(47, 99, 200, 0.1);
   --violet: #6d4fe0;
   --loss: #c8323c;
   --loss-soft: rgba(200, 50, 60, 0.1);
@@ -264,17 +269,17 @@
   --text: #1c1116;
   --muted: #6e5a63;
   --faint: #7d6871;
-  --accent: #c2306a;
-  --accent-soft: rgba(194, 48, 106, 0.1);
-  --win: #0b7a70;
-  --win-soft: rgba(11, 122, 112, 0.12);
+  --accent: #bf2a78;
+  --accent-soft: rgba(191, 42, 120, 0.1);
+  --win: #086b62;
+  --win-soft: rgba(8, 107, 98, 0.12);
   --warn: #8f5f00;
   --warn-soft: rgba(143, 95, 0, 0.12);
-  --info: #3a6fd8;
-  --info-soft: rgba(58, 111, 216, 0.1);
+  --info: #2d62c6;
+  --info-soft: rgba(45, 98, 198, 0.1);
   --violet: #7c4fd8;
-  --loss: #d0314a;
-  --loss-soft: rgba(208, 49, 74, 0.1);
+  --loss: #c42a1e;
+  --loss-soft: rgba(196, 42, 30, 0.1);
   --aurora-1: rgba(255, 107, 158, 0.09);
   --aurora-2: rgba(177, 124, 255, 0.07);
 }

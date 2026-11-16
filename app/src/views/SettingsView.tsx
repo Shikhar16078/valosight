@@ -148,7 +148,7 @@ export function SettingsView() {
                   setConfirm(null);
                   refresh();
                 }}
-                className="rounded-md bg-accent px-3 py-1 text-[13px] font-medium text-white disabled:opacity-40"
+                className="rounded-md bg-accent px-3 py-1 text-[13px] font-medium text-[var(--on-accent)] disabled:opacity-40"
               >
                 Remove
               </button>
@@ -227,7 +227,7 @@ function BackupSettings() {
         </div>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
-        <button onClick={download} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white disabled:opacity-50">
+        <button onClick={download} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-[var(--on-accent)] disabled:opacity-50">
           <Download size={14} /> {busy === "backup" ? "Preparing…" : "Download backup"}
         </button>
         <button onClick={() => fileRef.current?.click()} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-[13px] hover:border-accent hover:text-accent disabled:opacity-50">
@@ -516,7 +516,7 @@ function ThemeTile({ t, on, onClick }: { t: Theme; on: boolean; onClick: (e: Rea
         </div>
       </div>
       {on && (
-        <span className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full text-white" style={{ background: "var(--accent)" }}>
+        <span className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full text-[var(--on-accent)]" style={{ background: "var(--accent)" }}>
           <Check size={12} />
         </span>
       )}

@@ -95,7 +95,7 @@ function Stage({ item, image, currencyIcon }: { item: OtherItem; image: string |
   const small = !card && (item.kind === "Gun buddy" || item.kind === "Flex");
   return (
     <div
-      className="relative h-72 overflow-hidden rounded-2xl border border-line md:h-[440px]"
+      className="art-backing relative h-72 overflow-hidden rounded-2xl border border-line md:h-[440px]"
       style={{ background: "radial-gradient(70% 90% at 50% 60%, color-mix(in oklab, var(--accent) 18%, transparent), transparent 75%), color-mix(in oklab, var(--panel-2) 55%, transparent)" }}
     >
       {card ? (

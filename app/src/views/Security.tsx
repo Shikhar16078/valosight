@@ -295,7 +295,7 @@ export function Security() {
                       onClick={() => toggleKind(k.id)}
                       className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors ${SOFT_CSS} hover:bg-panel-2 ${on ? "text-ink" : "text-muted"}`}
                     >
-                      <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border transition-colors ${SOFT_CSS} ${on ? "border-accent bg-accent text-white" : "border-line-strong"}`}>
+                      <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border transition-colors ${SOFT_CSS} ${on ? "border-accent bg-accent text-[var(--on-accent)]" : "border-line-strong"}`}>
                         <Check size={11} strokeWidth={3} className={`transition-[opacity,transform] ${SOFT_CSS} ${on ? "scale-100 opacity-100" : "scale-50 opacity-0"}`} />
                       </span>
                       <span className="flex-1">{k.label}</span>

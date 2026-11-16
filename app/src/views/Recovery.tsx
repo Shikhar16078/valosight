@@ -331,7 +331,7 @@ export function Recovery() {
               </div>
               <pre className="scroll-thin min-h-[240px] flex-1 overflow-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12.5px] leading-relaxed">{text}</pre>
               <div className="flex gap-2 border-t border-line p-3">
-                <button onClick={copy} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 font-medium text-white hover:brightness-110">
+                <button onClick={copy} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 font-medium text-[var(--on-accent)] hover:brightness-110">
                   {copied === "ok" ? <Check size={16} /> : <ClipboardCopy size={16} />} {copied === "ok" ? "Copied" : copied === "fail" ? "Couldn't copy. Use Save .txt" : "Copy to clipboard"}
                 </button>
                 <button onClick={save} className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-line-strong px-3 py-2 font-medium hover:bg-panel-2">
@@ -432,7 +432,7 @@ function TxPicker({ pays, answer, onChange }: { pays: Rec[]; answer: string; onC
                 onClick={() => toggle(p.player_facing_purchase_id)}
                 className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors ${SOFT_CSS} hover:bg-panel-2 ${on ? "text-ink" : "text-muted"}`}
               >
-                <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border transition-colors ${SOFT_CSS} ${on ? "border-accent bg-accent text-white" : "border-line-strong"}`}>
+                <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border transition-colors ${SOFT_CSS} ${on ? "border-accent bg-accent text-[var(--on-accent)]" : "border-line-strong"}`}>
                   <Check size={11} strokeWidth={3} className={`transition-[opacity,transform] ${SOFT_CSS} ${on ? "scale-100 opacity-100" : "scale-50 opacity-0"}`} />
                 </span>
                 <span className="num min-w-0 flex-1 truncate">{String(p.player_facing_purchase_id)}</span>

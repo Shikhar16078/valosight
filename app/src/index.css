@@ -157,6 +157,13 @@ body::before {
     border-color: var(--line-strong);
   }
 
+  /* Item art (sprays, buddies, cards, currency icons) is painted for the game's dark UI: pale pieces vanish on a
+     light tile. Light themes give it a dark slate backing; dark themes keep their own surface. */
+  [data-theme="light"] .art-backing {
+    background: radial-gradient(120% 120% at 30% 20%, #2a2f3a, #161921) !important;
+    border-color: transparent;
+  }
+
   /* Cards that react to the pointer: a soft spotlight follows the cursor (set by useSpotlight). */
   .spot::after {
     content: "";
