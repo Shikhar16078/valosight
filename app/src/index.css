@@ -75,8 +75,9 @@ body::before {
     outline-offset: 2px;
   }
 
-  /* Cursors: a hand on anything you can click, "not allowed" on disabled controls, a crosshair over
-     charts you read by hovering, "help" on info-only items (Tailwind v4 leaves buttons on the arrow). */
+  /* Cursors: a hand on anything you can click, "not allowed" on disabled controls, "help" on info-only
+     items, and the plain arrow over charts: they're read by hovering (tooltips) and nothing in them is
+     clickable (Tailwind v4 leaves buttons on the arrow). */
   button:not(:disabled),
   [role="button"],
   [role="switch"],
@@ -99,15 +100,19 @@ body::before {
   [aria-busy="true"] {
     cursor: progress;
   }
-  .recharts-surface,
-  .heat-cell {
-    cursor: crosshair;
-  }
-  .recharts-pie-sector {
-    cursor: pointer;
-  }
   [title]:not(button):not(a):not(input):not(select):not(svg) {
     cursor: help;
+  }
+  .recharts-surface,
+  .recharts-surface *,
+  .heat-cell {
+    cursor: default;
+  }
+  /* Recharts makes each chart focusable (arrow keys move the tooltip). A mouse click shouldn't leave the
+     browser's blue focus box on it; keyboard focus still gets the normal ring from :focus-visible. */
+  .recharts-surface:focus:not(:focus-visible),
+  .recharts-wrapper:focus:not(:focus-visible) {
+    outline: none;
   }
 
   /* Tactile press on every enabled button. */
