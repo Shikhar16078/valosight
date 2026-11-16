@@ -1,4 +1,5 @@
 import { AnimatePresence, MotionConfig, motion, useScroll, useSpring } from "motion/react";
+import { PrivacyProvider, PrivacyToggle, Sens, useHideOn, usePrivacy } from "./lib/privacy";
 import { APP_NAME, Logo, Wordmark } from "./components/Logo";
 import { CalendarRange, Check, ChevronDown, Database, FlaskConical, Gavel, House, LayoutDashboard, LifeBuoy, Settings, Users, Shield, Sparkles, Swords, Upload, Wallet } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -79,7 +80,8 @@ function AccountSwitcher({ go }: { go: (v: ViewId) => void }) {
   const ref = useClickAway<HTMLDivElement>(open, () => setOpen(false));
   const cur = accounts.find((a) => a.id === accountId);
   const initials = (s: string) => s.replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase();
-  const name = cur?.game_name ?? cur?.username ?? "No account";
+  const pv = usePrivacy();
+  const name = (cur?.game_name ?? pv.name(cur?.username)) || "No account";
   return (
     <div ref={ref} className="relative">
       <button
@@ -112,10 +114,10 @@ function AccountSwitcher({ go }: { go: (v: ViewId) => void }) {
                 }}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-panel-2"
               >
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-panel-2 font-display text-[12px] font-bold">{initials(a.game_name ?? a.username)}</span>
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-panel-2 font-display text-[12px] font-bold">{initials(a.game_name ?? (pv.hidden ? "?" : a.username))}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">
-                    {a.game_name ?? a.username}
+                    {a.game_name ?? <Sens>{pv.name(a.username)}</Sens>}
                     {a.tagline && <span className="text-muted">#{a.tagline}</span>}
                   </span>
                   <span className="num block text-[11.5px] text-muted">data to {f.date(a.data_until)}</span>
@@ -243,7 +245,7 @@ function Freshness() {
         tabIndex={0}
         role="status"
         aria-label={stale ? `Data is ${days} days old` : `Data up to ${f.date(until)}`}
-        className={`flex h-8 cursor-help items-center gap-2 rounded-full ${stale ? "border border-warn/40 bg-warn-soft px-2.5 text-[12.5px] text-warn" : "w-8 justify-center hover:bg-panel-2"}`}
+        className={`flex h-8 items-center gap-2 rounded-full ${stale ? "border border-warn/40 bg-warn-soft px-2.5 text-[12.5px] text-warn" : "w-8 justify-center hover:bg-panel-2"}`}
       >
         {dot}
         {stale && <span className="hidden sm:inline">{days} days old</span>}
@@ -260,17 +262,26 @@ function Freshness() {
 }
 
 function IconNav({ items, view, go, className }: { items: typeof NAV; view: ViewId; go: (v: ViewId) => void; className: string }) {
-  // Which icon is pointed at (or keyboard-focused): its name shows in a pill that glides between icons.
-  const [tip, setTip] = useState<ViewId | null>(null);
+  // Which icon is pointed at (or keyboard-focused). One shared pill glides to it and swaps its text at once,
+  // so sliding across the icons never shows the previous page's name.
+  const [tip, setTip] = useState<{ id: ViewId; x: number } | null>(null);
+  const navRef = useRef<HTMLElement>(null);
+  const point = (id: ViewId, el: HTMLElement) => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const r = el.getBoundingClientRect();
+    setTip({ id, x: r.left + r.width / 2 - nav.getBoundingClientRect().left + nav.scrollLeft });
+  };
+  const cur = tip ? items.find((n) => n.id === tip.id) : null;
   return (
-    <nav aria-label="Pages" className={`scroll-thin min-w-0 items-center gap-0.5 overflow-x-auto md:overflow-visible ${className}`} onPointerLeave={() => setTip(null)}>
+    <nav ref={navRef} aria-label="Pages" className={`scroll-thin relative min-w-0 items-center gap-0.5 overflow-x-auto md:overflow-visible ${className}`} onPointerLeave={() => setTip(null)}>
       {items.map((n, i) => (
         <span key={n.id} className="flex items-center">
           {i > 0 && items[i - 1].group !== n.group && <span className="mx-1 h-5 w-px shrink-0 bg-line" aria-hidden />}
           <button
             onClick={() => go(n.id)}
-            onPointerEnter={(e) => e.pointerType === "mouse" && setTip(n.id)}
-            onFocus={(e) => e.currentTarget.matches(":focus-visible") && setTip(n.id)}
+            onPointerEnter={(e) => e.pointerType === "mouse" && point(n.id, e.currentTarget)}
+            onFocus={(e) => e.currentTarget.matches(":focus-visible") && point(n.id, e.currentTarget)}
             onBlur={() => setTip(null)}
             aria-label={n.label}
             aria-current={view === n.id ? "page" : undefined}
@@ -279,29 +290,30 @@ function IconNav({ items, view, go, className }: { items: typeof NAV; view: View
             {view === n.id && (
               <motion.span layoutId="topnav-active" className="absolute inset-0 rounded-lg bg-accent-soft ring-1 ring-accent/30" transition={{ type: "spring", stiffness: 500, damping: 40 }} />
             )}
-            <motion.span className="relative" animate={{ y: tip === n.id ? -1 : 0, scale: tip === n.id ? 1.12 : 1 }} transition={{ type: "spring", stiffness: 500, damping: 22 }}>
+            <motion.span className="relative" animate={{ y: tip?.id === n.id ? -1 : 0, scale: tip?.id === n.id ? 1.12 : 1 }} transition={{ type: "spring", stiffness: 500, damping: 22 }}>
               {n.icon}
             </motion.span>
-            <span aria-hidden className="pointer-events-none absolute inset-x-[-60px] top-full z-40 mt-2 flex justify-center">
-              <AnimatePresence>
-                {tip === n.id && (
-                  <motion.span
-                    layoutId="topnav-tip"
-                    initial={{ opacity: 0, y: -4, scale: 0.92 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -4, scale: 0.92, transition: { duration: 0.12 } }}
-                    transition={{ type: "spring", stiffness: 520, damping: 34 }}
-                    className={`pop whitespace-nowrap px-2.5 py-1 text-[12px] font-medium ${n.group === "Account recovery" ? "text-warn" : "text-ink"}`}
-                  >
-                    {n.label}
-                    <span className="ml-1.5 text-faint">{n.group === "Account recovery" ? "" : n.group}</span>
-                  </motion.span>
-                )}
-              </AnimatePresence>
-            </span>
           </button>
         </span>
       ))}
+      <AnimatePresence>
+        {tip && cur && (
+          <motion.span
+            key="tip"
+            aria-hidden
+            className="pointer-events-none absolute left-0 top-full z-40 mt-2 flex w-0 justify-center"
+            initial={{ opacity: 0, y: -4, x: tip.x }}
+            animate={{ opacity: 1, y: 0, x: tip.x }}
+            exit={{ opacity: 0, y: -4, transition: { duration: 0.12 } }}
+            transition={{ x: { type: "spring", stiffness: 700, damping: 45 }, default: { duration: 0.15, ease: "easeOut" } }}
+          >
+            <span className={`pop whitespace-nowrap px-2.5 py-1 text-[12px] font-medium ${cur.group === "Account recovery" ? "text-warn" : "text-ink"}`}>
+              {cur.label}
+              {cur.group !== "Account recovery" && <span className="ml-1.5 text-faint">{cur.group}</span>}
+            </span>
+          </motion.span>
+        )}
+      </AnimatePresence>
     </nav>
   );
 }
@@ -326,6 +338,7 @@ function TopBar({ view, items, go, empty }: { view: ViewId; items: typeof NAV; g
           <IconNav items={items} view={view} go={go} className="flex" />
         </div>
         <div className="flex min-w-0 items-center justify-end gap-2">
+          {!empty && <PrivacyToggle compact />}
           {!empty && <Freshness />}
           {!empty && !NO_SCOPE.includes(view) && <ScopePill />}
           {/* Back to the home page, styled like its "Open the app" button so the two products match. Carries the
@@ -333,7 +346,7 @@ function TopBar({ view, items, go, empty }: { view: ViewId; items: typeof NAV; g
           <a
             href={homeUrl(settings)}
             title={`${APP_NAME} home page`}
-            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[10px] bg-[linear-gradient(110deg,var(--accent),color-mix(in_oklab,var(--accent)_65%,var(--violet)))] px-2.5 text-[14px] font-semibold text-white shadow-[0_8px_24px_-10px_var(--accent)] transition-[transform,box-shadow] duration-200 hover:-translate-y-px hover:shadow-[0_12px_30px_-10px_var(--accent)] sm:px-3.5"
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[10px] bg-[linear-gradient(110deg,var(--accent),color-mix(in_oklab,var(--accent)_65%,var(--violet)))] px-2.5 text-[14px] font-semibold text-white shadow-[0_4px_14px_-8px_color-mix(in_oklab,var(--accent)_55%,transparent)] transition-[transform,box-shadow] duration-200 hover:-translate-y-px hover:shadow-[0_6px_18px_-8px_color-mix(in_oklab,var(--accent)_70%,transparent)] sm:px-3.5"
           >
             <House size={16} />
             <span className="hidden sm:inline">Back to home</span>
@@ -363,6 +376,7 @@ function ScrollProgress() {
 
 function Shell() {
   const { accounts, accountId, loading, error, has, setAccountId, refresh } = useAccount();
+  useHideOn(accountId); // switching accounts goes back to privacy mode (here, as the Shell is always mounted)
   const [view, go] = useHashView();
   const [demo, setDemo] = useState<{ busy: boolean; error?: string }>({ busy: false });
 
@@ -502,6 +516,7 @@ function MotionRoot({ children }: { children: ReactNode }) {
 
 export default function App() {
   return (
+    <PrivacyProvider>
     <SettingsProvider>
       <MotionRoot>
         <AccountProvider>
@@ -511,5 +526,6 @@ export default function App() {
         </AccountProvider>
       </MotionRoot>
     </SettingsProvider>
+    </PrivacyProvider>
   );
 }

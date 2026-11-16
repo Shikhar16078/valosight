@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { useDateGuard } from "../lib/privacy-dates";
+import { PrivacyToggle, Sens, maskIp, usePrivacy } from "../lib/privacy";
+import { Reveal } from "../components/anim";
 import { AnimatePresence, motion } from "motion/react";
 import type React from "react";
 import { useAccount } from "../lib/account";
@@ -18,9 +21,27 @@ export function SettingsView() {
   const { settings, update, f } = useSettings();
   const { accounts, refresh } = useAccount();
   const [confirm, setConfirm] = useState<{ id: number; name: string; typed: string } | null>(null);
+  const pv = usePrivacy();
+  // Keep the last confirm box's contents while it slides closed.
+  const lastConfirm = useRef(confirm);
+  if (confirm) lastConfirm.current = confirm;
+  const c = confirm ?? lastConfirm.current ?? { id: 0, name: "", typed: "" };
 
   return (
     <Page code="08 / Settings" title="Settings" sub="Saved in your vault, so they apply every time you open it.">
+      <Card span={12} title="Privacy mode" hint="Hides IP addresses, your sign-in username and the account creation date on every page (your Riot ID is public, so it stays) — for screenshots, screen shares and streams. Always on when the app opens, after an import and when you switch accounts, so a reload is always safe to share; CSV exports keep the real values." right={<PrivacyToggle />}>
+        <p className="text-[13px] text-muted">
+          {pv.hidden ? (
+            <>
+              <b className="font-medium text-ink">On.</b> Sensitive details are masked, e.g. <span className="num">{maskIp("203.0.113.42")}</span>. The eye icon in the top bar switches it too.
+            </>
+          ) : (
+            <>
+              <b className="font-medium text-warn">Off.</b> Everything is shown in full. Turn it back on before sharing your screen.
+            </>
+          )}
+        </p>
+      </Card>
       <Card span={6} title="Timezone" hint="Riot stores everything in UTC. Pick how times are shown.">
         <select value={settings.tz} onChange={(e) => update({ tz: e.target.value })} className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2">
           <optgroup label="Common">
@@ -80,11 +101,11 @@ export function SettingsView() {
             <li key={a.id} className="flex items-center justify-between gap-3 py-2">
               <div>
                 <div className="font-medium">
-                  {a.game_name ?? a.username}
+                  {a.game_name ?? <Sens>{pv.name(a.username)}</Sens>}
                   {a.tagline && <span className="text-muted">#{a.tagline}</span>}
                 </div>
                 <div className="num text-[12px] text-muted">
-                  {a.username} · added {f.date(a.added_at)}
+                  <Sens>{pv.name(a.username)}</Sens> · added {f.date(a.added_at)}
                 </div>
               </div>
               <button onClick={() => setConfirm({ id: a.id, name: a.username, typed: "" })} className="rounded-md border border-line px-2.5 py-1 text-[12.5px] text-muted hover:border-accent hover:text-accent">
@@ -93,17 +114,19 @@ export function SettingsView() {
             </li>
           ))}
         </ul>
-        {confirm && (
+        <Reveal show={!!confirm}>
           <div className="mt-3 rounded-lg border border-accent/40 bg-accent-soft p-3">
             <div className="text-[13px]">
-              Type <b className="num">{confirm.name}</b> to remove this account from the vault.
+              Type <b className="num"><Sens>{pv.name(c.name)}</Sens></b> to remove this account from the vault.{pv.hidden && " (Show sensitive details to see the username.)"}
             </div>
             <div className="mt-2 flex gap-2">
-              <input autoFocus value={confirm.typed} onChange={(e) => setConfirm({ ...confirm, typed: e.target.value })} className="flex-1 rounded-md border border-line bg-panel px-2 py-1" />
+              <input autoFocus value={c.typed} onChange={(e) => setConfirm({ ...c, typed: e.target.value })} className="flex-1 rounded-md border border-line bg-panel px-2 py-1" />
               <button
-                disabled={confirm.typed !== confirm.name}
+                disabled={c.typed !== c.name}
                 onClick={async () => {
-                  await api.deleteAccount(confirm.id);
+                  // While the box slides closed after Cancel it still shows the last values: do nothing then.
+                  if (confirm?.id !== c.id) return;
+                  await api.deleteAccount(c.id);
                   setConfirm(null);
                   refresh();
                 }}
@@ -116,7 +139,7 @@ export function SettingsView() {
               </button>
             </div>
           </div>
-        )}
+        </Reveal>
       </Card>
 
       <Card span={6} title="Backup & restore" hint="Your vault lives only in this browser. Download a backup to keep it safe, or to move it to another browser or device.">
@@ -132,6 +155,9 @@ function BackupSettings() {
   const [store, setStore] = useState<{ persisted: boolean; usage: number | null } | null>(null);
   const [busy, setBusy] = useState<"backup" | "restore" | null>(null);
   const [pending, setPending] = useState<File | null>(null);
+  const lastPending = useRef(pending);
+  if (pending) lastPending.current = pending;
+  const shownPending = pending ?? lastPending.current;
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -200,13 +226,13 @@ function BackupSettings() {
           }}
         />
       </div>
-      {pending && (
+      <Reveal show={!!pending}>
         <div className="mt-3 rounded-lg border border-loss/40 bg-loss/5 p-3 text-[13px]">
           <div>
-            Replace everything in this browser's vault with <b className="num">{pending.name}</b>? Accounts, imports, tags and settings here will be swapped for the backup's.
+            Replace everything in this browser's vault with <b className="num">{shownPending?.name}</b>? Accounts, imports, tags and settings here will be swapped for the backup's.
           </div>
           <div className="mt-2 flex gap-2">
-            <button onClick={() => restore(pending)} disabled={!!busy} className="rounded-md bg-loss px-3 py-1 text-[13px] font-medium text-white disabled:opacity-50">
+            <button onClick={() => pending && restore(pending)} disabled={!!busy} className="rounded-md bg-loss px-3 py-1 text-[13px] font-medium text-white disabled:opacity-50">
               {busy === "restore" ? "Restoring…" : "Replace and restore"}
             </button>
             <button onClick={() => setPending(null)} disabled={!!busy} className="rounded-md border border-line px-3 py-1 text-[13px]">
@@ -214,14 +240,17 @@ function BackupSettings() {
             </button>
           </div>
         </div>
-      )}
-      {msg && <div className={`mt-3 text-[13px] ${msg.ok ? "text-muted" : "text-loss"}`}>{msg.text}</div>}
+      </Reveal>
+      <Reveal show={!!msg}>
+        <div className={`mt-3 text-[13px] ${msg?.ok ? "text-muted" : "text-loss"}`}>{msg?.text}</div>
+      </Reveal>
     </div>
   );
 }
 
 function CurrencySettings() {
   const { settings, update, f } = useSettings();
+  const guard = useDateGuard();
   const pay = useRecords(DS.payments, false);
   const used = [...new Set(pay.all.map((p) => p.currency_code).filter(Boolean))] as string[];
   const { targets, fx } = currencySetup(settings);
@@ -322,7 +351,7 @@ function CurrencySettings() {
                         1 {c} = <b>{live.rate}</b> {t} <span className="text-muted">today</span>
                       </span>
                       <span className="text-[11.5px] text-faint">
-                        {days?.length ? `daily since ${f.date(days[0][0])} · ` : "today only · "}
+                        {days?.length ? `daily since ${guard(days[0][0], f.date(days[0][0]))} · ` : "today only · "}
                         {live.source}
                       </span>
                     </div>

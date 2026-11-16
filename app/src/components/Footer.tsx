@@ -1,4 +1,5 @@
 import { motion } from "motion/react";
+import { usePrivacy } from "../lib/privacy";
 import { ArrowUp, ArrowUpRight, Heart, Database, FileStack, HardDrive, LifeBuoy, Lock, RefreshCw, Settings, Upload } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAccount } from "../lib/account";
@@ -13,6 +14,7 @@ import { APP_NAME, AUTHOR, Logo, Wordmark } from "./Logo";
 /** Site footer: where the data comes from, shortcuts, a quick theme picker and the fine print. */
 export function Footer({ go, empty }: { go: (v: string) => void; empty: boolean }) {
   const { detail } = useAccount();
+  const pv = usePrivacy();
   const { settings, setTheme } = useSettings();
   const offline = useOffline();
   const files = detail?.datasets.filter((d) => d.count > 0).length ?? 0;
@@ -61,7 +63,7 @@ export function Footer({ go, empty }: { go: (v: string) => void; empty: boolean 
               <div className="mt-3 grid grid-cols-3 gap-2">
                 <Fact icon={<FileStack size={14} />} k="Data files" v={String(files)} />
                 <Fact icon={<RefreshCw size={14} />} k="Imports" v={String(imports)} />
-                <Fact icon={<HardDrive size={14} />} k="Covers" v={firsts?.length && lasts?.length ? `${firsts[0].slice(0, 4)} → ${lasts[lasts.length - 1].slice(0, 4)}` : "—"} />
+                <Fact icon={<HardDrive size={14} />} k="Covers" v={firsts?.length && lasts?.length ? `${pv.hidden ? "••••" : firsts[0].slice(0, 4)} → ${lasts[lasts.length - 1].slice(0, 4)}` : "—"} />
               </div>
             )}
           </div>

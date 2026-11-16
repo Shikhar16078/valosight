@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { PrivacyGate } from "../lib/privacy";
 import { useAccount, useRecords } from "../lib/account";
 import type { Rec } from "../lib/api";
 import { useSettings } from "../lib/settings";
@@ -30,6 +31,7 @@ export function DataBrowser() {
 
   return (
     <Page code="06 / Raw data" title="Every data file" sub="Exactly what Riot sent, merged across imports. Files from any game appear here, even ones this app has no special page for.">
+      <PrivacyGate what="Raw data files">
       <Card span={3} title="Files" pad={false}>
         <ul className="scroll-thin max-h-[70vh] overflow-y-auto py-1">
           {list.map((d) => (
@@ -65,11 +67,12 @@ export function DataBrowser() {
             {info.mode === "snapshot" ? (
               <pre className="scroll-thin overflow-x-auto rounded-lg bg-panel-2 p-4 font-mono text-[12.5px] leading-relaxed">{JSON.stringify(detail?.snapshots[info.dataset], null, 2)}</pre>
             ) : (
-              <DataTable rows={recs.data} cols={cols} initialSort={{ id: "_t", desc: true }} filename={info.dataset.replace("/", "_")} pageSize={50} />
+              <DataTable rows={recs.data} cols={cols} initialSort={{ id: "_t", desc: true }} filename={info.dataset.replace("/", "_")} />
             )}
           </Card>
         )}
       </div>
+      </PrivacyGate>
     </Page>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Swap } from "../components/anim";
 import { useAccount } from "../lib/account";
 import { api, type Account, type Rec } from "../lib/api";
 import { useMoney } from "../lib/convert";
@@ -6,6 +7,8 @@ import { useSettings } from "../lib/settings";
 import { DS, amountPaid, classifyAllVP, isRealMatch, matchMinutes, money, n0 } from "../lib/valorant";
 import { Badge, Card, Page, Stat } from "../components/ui";
 import { MonthlyChart, SERIES, monthSpan } from "../components/charts";
+import { scrollToSection } from "../lib/focus";
+import { Sens, usePrivacy } from "../lib/privacy";
 
 interface Row {
   a: Account;
@@ -96,9 +99,37 @@ export function AllAccounts({ open }: { open: (id: number) => void }) {
     return monthSpan([...m.keys()]).map((k) => ({ month: k, ...(m.get(k) ?? {}) }));
   }, [stats, f]);
 
+  // The top cards sort the table by what they count. Spent compares in your home currency; an account with an
+  // amount that can't be converted (no rate yet) can't be compared fairly, so it goes last instead of mixing currencies.
+  const [sortKey, setSortKey] = useState<"spent" | "games" | "skins" | "alerts" | null>(null);
+  // Without a display currency, accounts that all pay in one currency still compare in it.
+  const curs = new Set(stats.flatMap((x) => [...x.byCur.keys()]));
+  const base = m$.home || (curs.size === 1 ? [...curs][0] : "");
+  const spentOf = (x: (typeof stats)[number]): number | null => {
+    let sum = 0;
+    for (const [c, v] of x.byCur) {
+      const h = c === base ? v : m$.home ? m$.convert(v, c) : null;
+      if (h == null) return null;
+      sum += h;
+    }
+    return sum;
+  };
+  const bySpent = (a: (typeof stats)[number], b: (typeof stats)[number]) => {
+    const x = spentOf(a);
+    const y = spentOf(b);
+    return x == null || y == null ? (x == null ? 1 : 0) - (y == null ? 1 : 0) : y - x;
+  };
+  const sorted = sortKey ? [...stats].sort((a, b) => (sortKey === "spent" ? bySpent(a, b) : (b[sortKey] as number) - (a[sortKey] as number))) : stats;
+  const sortBy = (k: NonNullable<typeof sortKey>) => {
+    setSortKey(k);
+    scrollToSection("side-by-side");
+  };
+  const SORTED = { spent: "Spent", games: "Matches", skins: "Skins", alerts: "Alerts" };
+  const pv = usePrivacy();
   const money1 = totals.cur[0];
   return (
     <Page code="∑ / All accounts" title="All accounts" sub={`${accounts.length} account${accounts.length === 1 ? "" : "s"} in this vault · times in ${f.tzLabel}`}>
+      <Swap k={rows ? "ready" : "loading"} className="col-span-12 grid grid-cols-12 gap-4">
       {!rows ? (
         <Card span={12}>
           <div className="py-10 text-center text-muted">Loading every account…</div>
@@ -107,16 +138,18 @@ export function AllAccounts({ open }: { open: (id: number) => void }) {
         <>
           <Stat
             label="Spent across accounts"
+            onClick={() => sortBy("spent")}
+            action="Compare accounts by money spent"
             value={totals.home ?? money1?.[1] ?? 0}
             format={(v) => (totals.home != null ? money(v, m$.home) : money(v, money1?.[0] ?? "USD"))}
             tone="accent"
             sub={totals.home != null ? totals.cur.map(([c, v]) => money(v, c)).join(" + ") : totals.cur.length > 1 ? `+ ${totals.cur.slice(1).map(([c, v]) => money(v, c)).join(", ")} — set a home currency to combine` : "all payments"}
           />
-          <Stat label="Matches" value={totals.games} sub={`${n0(totals.hours)} hours`} />
-          <Stat label="Skins bought" value={totals.skins} />
-          <Stat label="Riot alerts" value={totals.alerts} tone={totals.alerts ? "warn" : "default"} />
+          <Stat label="Matches" onClick={() => sortBy("games")} action="Compare accounts by matches" value={totals.games} sub={`${n0(totals.hours)} hours`} />
+          <Stat label="Skins bought" onClick={() => sortBy("skins")} action="Compare accounts by skins" value={totals.skins} />
+          <Stat label="Riot alerts" onClick={() => sortBy("alerts")} action="Compare accounts by Riot alerts" value={totals.alerts} tone={totals.alerts ? "warn" : "default"} />
 
-          <Card span={12} title="Side by side" hint="Click an account to open its dashboard" pad={false}>
+          <Card id="side-by-side" span={12} title="Side by side" hint={`Click an account to open its dashboard${sortKey ? ` · sorted by ${SORTED[sortKey].toLowerCase()}, highest first` : ""}`} pad={false}>
             <div className="scroll-thin overflow-x-auto">
               <table className="w-full text-[13.5px]">
                 <thead>
@@ -134,14 +167,14 @@ export function AllAccounts({ open }: { open: (id: number) => void }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.map((s, i) => (
+                  {sorted.map((s) => (
                     <tr key={s.r.a.id} onClick={() => open(s.r.a.id)} className="cursor-pointer border-b border-line last:border-0 hover:bg-panel-2">
                       <td className="px-4 py-2.5">
                         <span className="flex items-center gap-2">
-                          <span className="h-2.5 w-2.5 rounded-sm" style={{ background: SERIES[i % SERIES.length] }} />
-                          <span className="font-medium">{label(s.r.a)}</span>
+                          <span className="h-2.5 w-2.5 rounded-sm" style={{ background: SERIES[stats.indexOf(s) % SERIES.length] }} />
+                          <span className="font-medium">{s.r.a.game_name ? label(s.r.a) : <Sens>{pv.name(label(s.r.a))}</Sens>}</span>
                         </span>
-                        <span className="num pl-[18px] text-[12px] text-muted">{s.r.a.username}</span>
+                        <span className="num pl-[18px] text-[12px] text-muted"><Sens>{pv.name(s.r.a.username)}</Sens></span>
                       </td>
                       <td className="num whitespace-nowrap px-4 py-2.5 text-right">{[...s.byCur].map(([c, v]) => m$.fmt(v, c)).join(" + ") || "—"}</td>
                       <td className="num px-4 py-2.5 text-right">{s.r.pay.length}</td>
@@ -160,10 +193,11 @@ export function AllAccounts({ open }: { open: (id: number) => void }) {
           </Card>
 
           <Card span={12} title="Matches per month, by account">
-            <MonthlyChart data={activity} series={stats.map((s, i) => ({ key: `a${s.r.a.id}`, label: label(s.r.a), color: SERIES[i % SERIES.length], stack: true }))} />
+            <MonthlyChart data={activity} series={stats.map((s, i) => ({ key: `a${s.r.a.id}`, label: s.r.a.game_name ? label(s.r.a) : pv.name(label(s.r.a)), color: SERIES[i % SERIES.length], stack: true }))} />
           </Card>
         </>
       )}
+      </Swap>
     </Page>
   );
 }
