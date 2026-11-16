@@ -3,6 +3,8 @@ import { api, type FxRates } from "./api";
 import { useAccount, useRecords } from "./account";
 import { useSettings, type Settings } from "./settings";
 import { DS, money } from "./valorant";
+import { CountUp, Stat } from "../components/ui";
+import { Swap } from "../components/anim";
 
 export const HOME_CURRENCIES = ["INR", "USD", "EUR", "GBP", "PHP", "SGD", "MYR", "IDR", "THB", "VND", "JPY", "KRW", "AUD", "NZD", "CAD", "BRL", "MXN", "TRY", "AED", "PKR", "BDT"];
 
@@ -184,53 +186,6 @@ function Delta({ then, now }: { then: number; now: number }) {
   );
 }
 
-/**
- * Converted amounts, emphasised. With `items` (each payment's amount and date) and downloaded
- * history, every currency shows what it cost on the day you paid next to today's value.
- */
-export function ConvertedChips({ v, cur, items, digits = 0 }: { v: number; cur: string; items?: { v: number; t: string | null }[]; digits?: number }) {
-  const { targets, thenNow, convert } = useMoney();
-  const rows = targets.flatMap((to) => {
-    if (to === cur) return [];
-    const tn = items ? thenNow(items, cur, to) : null;
-    const now = tn?.now ?? convert(v, cur, to);
-    return now == null ? [] : [{ to, then: tn?.then ?? null, now }];
-  });
-  if (!rows.length) return null;
-  return (
-    <span className="flex flex-col gap-1.5">
-      {rows.map((r) =>
-        r.then != null ? (
-          <span key={r.to} className="num grid grid-cols-[auto_1fr_auto] items-baseline gap-x-2 rounded-lg border border-info/25 bg-info-soft px-2.5 py-1.5">
-            <span className="text-[10.5px] font-semibold tracking-wide text-info">{r.to}</span>
-            <span className="text-[15px] font-medium text-ink" title="What you paid, at the exchange rate on each payment's date">
-              {money(r.then, r.to, digits)} <span className="text-[11px] font-normal text-muted">when paid</span>
-            </span>
-            <span className="text-[11.5px]">
-              <Delta then={r.then} now={r.now} />
-            </span>
-            <span />
-            <span className="text-[12px] text-muted" title="The same amount at today's exchange rate">
-              {money(r.now, r.to, digits)} at today's rate
-            </span>
-            <span />
-          </span>
-        ) : (
-          <span
-            key={r.to}
-            title={`Converted with today's ${cur} → ${r.to} rate`}
-            className="num inline-flex w-fit items-baseline gap-1 rounded-md border border-info/25 bg-info-soft px-2 py-0.5 text-[14px] font-medium text-ink"
-          >
-            <span className="text-info">≈</span>
-            {money(r.now, r.to, digits)}
-            <span className="text-[10.5px] font-semibold tracking-wide text-info">{r.to}</span>
-          </span>
-        ),
-      )}
-    </span>
-  );
-}
-
 /** One payment in each display currency: at its own date's rate, with today's value after it. */
 export function PaidIn({ v, cur, t }: { v: number; cur: string; t: string | null }) {
   const { targets, rateAt, rateNow, hasHistory } = useMoney();
@@ -250,5 +205,108 @@ export function PaidIn({ v, cur, t }: { v: number; cur: string; t: string | null
         </span>
       ))}
     </span>
+  );
+}
+
+const SPEND_CUR_KEY = "riotvault.spendCurrency";
+
+/** Currency switching for a "money spent" figure: the options, the chosen one (remembered), the value to show
+ * and the pieces of UI (the one-line detail and the pills). Shared by SpendStat and Overview's Money card. */
+function useSpendView(v: number, cur: string, items: { v: number; t: string | null }[]) {
+  const { targets, thenNow, convert } = useMoney();
+  const options = [cur, ...targets.filter((t) => t !== cur && convert(v, cur, t) != null)];
+  const [pick, setPick] = useState<string>(() => {
+    try {
+      return localStorage.getItem(SPEND_CUR_KEY) ?? cur;
+    } catch {
+      return cur;
+    }
+  });
+  const shown = options.includes(pick) ? pick : cur;
+  const choose = (c: string) => {
+    setPick(c);
+    try {
+      localStorage.setItem(SPEND_CUR_KEY, c);
+    } catch {
+      /* private mode: just don't remember */
+    }
+  };
+  const tn = shown !== cur ? thenNow(items, cur, shown) : null;
+  const now = shown !== cur ? (tn?.now ?? convert(v, cur, shown)) : null;
+  const value = shown === cur ? v : (tn?.then ?? now ?? v);
+  const detail =
+    shown !== cur && now != null ? (
+      <div className="num text-[12px] text-muted">
+        {tn?.then != null ? (
+          <>
+            when paid · {money(now, shown)} today{" "}
+            <span className="text-[11.5px]">
+              <Delta then={tn.then} now={now} />
+            </span>
+          </>
+        ) : (
+          <>at today's rate</>
+        )}
+        <span className="text-faint"> · charged {money(v, cur)}</span>
+      </div>
+    ) : null;
+  const pills =
+    options.length > 1 ? (
+      <div role="group" aria-label="Show in currency" className="flex flex-wrap gap-1">
+        {options.map((c) => (
+          <button
+            key={c}
+            type="button"
+            aria-pressed={shown === c}
+            onClick={() => choose(c)}
+            title={c === cur ? `What Riot charged, in ${c}` : `Converted to ${c}`}
+            className={`num rounded-md px-1.5 py-0.5 text-[11px] font-semibold tracking-wide transition-colors duration-500 ${shown === c ? "bg-accent-soft text-accent" : "text-faint hover:bg-panel-2 hover:text-ink"}`}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+    ) : null;
+  return { shown, value, detail, pills };
+}
+
+/**
+ * A "money spent" stat card whose big number can be shown in the currency Riot charged or in any display
+ * currency (small pills under the number; the choice is remembered in this browser). In a display currency
+ * the number is what it cost on each payment's date, with today's value and the change on one plain line.
+ */
+export function SpendStat({ label, v, cur, items, sub, onClick, action }: { label: string; v: number; cur: string; items: { v: number; t: string | null }[]; sub?: ReactNode; onClick?: () => void; action?: string }) {
+  const sv = useSpendView(v, cur, items);
+  return (
+    <Stat
+      label={label}
+      value={sv.value}
+      format={(x) => money(x, sv.shown)}
+      tone="accent"
+      onClick={onClick}
+      action={action}
+      extra={
+        <div className="space-y-1.5">
+          <Swap k={sv.shown}>{sv.detail}</Swap>
+          {sv.pills}
+        </div>
+      }
+      sub={sub}
+    />
+  );
+}
+
+/** The same switchable figure, for use inside another card (no card of its own). */
+export function SpendFigure({ v, cur, items, sub }: { v: number; cur: string; items: { v: number; t: string | null }[]; sub?: ReactNode }) {
+  const sv = useSpendView(v, cur, items);
+  return (
+    <div className="space-y-1.5">
+      <div className="num text-[30px] font-medium leading-none text-accent">
+        <CountUp value={sv.value} format={(x) => money(x, sv.shown)} id="spend-figure" />
+      </div>
+      <Swap k={sv.shown}>{sv.detail}</Swap>
+      {sv.pills}
+      {sub && <div className="pt-0.5 text-[12.5px] text-muted">{sub}</div>}
+    </div>
   );
 }

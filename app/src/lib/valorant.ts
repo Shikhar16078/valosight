@@ -233,6 +233,15 @@ export function classifyAllVP(records: Rec[], all: Rec[] = records): VPItem[] {
   return records.filter(isVP).map((r) => byId.get(r.transaction_id) ?? classifyVP(r));
 }
 
+/** VP purchase groups, as the money and collection pages show and link them (`key` travels in click-throughs). */
+export const VP_GROUPS: { category: VPItem["category"]; label: string; key: string }[] = [
+  { category: "Skin", label: "Skins", key: "skins" },
+  { category: "Battle Pass", label: "Battle passes", key: "passes" },
+  { category: "Bundle", label: "Bundles", key: "bundles" },
+  { category: "Unknown", label: "Unknown items", key: "unknown" },
+];
+export const vpGroupOf = (category: string) => VP_GROUPS.find((g) => g.category === category) ?? VP_GROUPS[3];
+
 export function classifyVP(r: Rec): VPItem {
   const src = String(r.transaction_source ?? "").trim();
   const cost = Number(r.spent_currency_amount) || 0;
@@ -268,6 +277,76 @@ const FIELD: Record<string, string> = {
   "mfa preference updated": "2-step verification preference",
   "active verified phone number": "Phone number",
 };
+/** Account-change categories, for filtering the security timeline. `on` = shown by default. */
+export const AUDIT_KINDS = [
+  { id: "flagged", label: "Flagged by Riot", on: true },
+  { id: "password", label: "Password", on: true },
+  { id: "email", label: "Email", on: true },
+  { id: "riotid", label: "Riot ID", on: true },
+  { id: "phone", label: "Phone", on: true },
+  { id: "mfa", label: "2-step verification", on: true },
+  { id: "linked", label: "Linked logins", on: true },
+  { id: "devices", label: "Devices", on: true },
+  { id: "account", label: "Account", on: true },
+  { id: "riotmail", label: "Emails from Riot", on: false },
+  { id: "other", label: "Other", on: false },
+] as const;
+export type AuditKind = (typeof AUDIT_KINDS)[number]["id"];
+
+export function auditKind(r: Rec): AuditKind {
+  const t = r.event_type ?? "";
+  const d = r.event_type === "USER_FIELD_CHANGED" ? String(r.description ?? "") : "";
+  if (t === "ANOMALOUS_ACTIVITY") return "flagged";
+  if (t === "PASSWORD_CHANGE" || t === "PASSWORD_RESET" || d === "password") return "password";
+  if (t === "EMAIL_VERIFIED" || d === "emailAddress" || d === "emailStatus") return "email";
+  if (d === "alias") return "riotid";
+  if (/phone/i.test(d)) return "phone";
+  if (t === "AUTH_FACTOR_CHANGE" || /mfa/i.test(d)) return "mfa";
+  if (/IDENTITY/.test(t)) return "linked";
+  if (t.startsWith("DEVICE_TRUST")) return "devices";
+  if (t === "CREATED" || t === "USER_FIELD_CHANGED") return "account";
+  if (t === "EMAIL") return "riotmail";
+  return "other";
+}
+
+export const isPwEvent = (a: Rec) => a.event_type === "PASSWORD_CHANGE" || a.event_type === "PASSWORD_RESET";
+/**
+ * Riot logs each password change twice: "user field changed: password" plus PASSWORD_CHANGE or
+ * PASSWORD_RESET about a second later. Drops the generic twin so each change shows once.
+ */
+export function dedupeAudit(records: Rec[]): Rec[] {
+  const pwTimes = records.filter(isPwEvent).map((a) => Date.parse(a._t ?? ""));
+  return records.filter((a) => !(a.event_type === "USER_FIELD_CHANGED" && a.description === "password" && pwTimes.some((t) => Math.abs(t - Date.parse(a._t ?? "")) < 10_000)));
+}
+
+/**
+ * Best win streak (`bw`, with its games in `best`) and worst losing streak (`bl`), in time order. Draws and
+ * other results don't break a streak, so they're part of the run.
+ */
+export function winStreaks(games: Rec[]) {
+  let bw = 0,
+    bl = 0,
+    cw = 0,
+    cl = 0;
+  let run: Rec[] = [],
+    best: Rec[] = [];
+  for (const g of [...games].sort((a, b) => (a._t ?? "").localeCompare(b._t ?? ""))) {
+    if (g.game_outcome === "Win") {
+      cw++;
+      cl = 0;
+      if (cw === 1) run = [];
+      run.push(g);
+      if (cw > bw) best = [...run];
+    } else if (g.game_outcome === "Loss") {
+      cl++;
+      cw = 0;
+    } else if (cw) run.push(g);
+    bw = Math.max(bw, cw);
+    bl = Math.max(bl, cl);
+  }
+  return { bw, bl, best: new Set(best) };
+}
+
 export function auditInfo(r: Rec) {
   const a = AUDIT[r.event_type] ?? { label: titleCase(r.event_type ?? "Event"), level: 0 as const };
   let label = a.label;
@@ -280,6 +359,9 @@ export const titleCase = (s: string) =>
     .replace(/[_-]+/g, " ")
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase());
+
+/** A penalty in force right now. Exact match: "INACTIVE" must not count. */
+export const isActivePenalty = (status: string | null | undefined) => /^\s*active\s*$/i.test(status ?? "");
 
 export const PENALTY: Record<string, string> = {
   CHAT_RESTRICTION: "Text chat restricted",

@@ -1,15 +1,17 @@
-import { AlertTriangle } from "lucide-react";
+import { Check, X } from "lucide-react";
+import { useCreated, useCreationIp, useDateGuard, useMaskIp } from "../lib/privacy-dates";
 import { useMemo, useState } from "react";
 import { useAccount, useRecords } from "../lib/account";
-import { useAnnotations, type IpTag } from "../lib/annotations";
 import type { Rec } from "../lib/api";
 import { useSettings } from "../lib/settings";
-import { DS, auditInfo } from "../lib/valorant";
+import { AUDIT_KINDS, DS, auditInfo, auditKind, dedupeAudit, isPwEvent, type AuditKind } from "../lib/valorant";
 import { networkOf } from "../lib/network";
-import { buildIncidents } from "../lib/incidents";
-import { Badge, Card, Empty, Page, Segmented, Stat } from "../components/ui";
+import { Card, Empty, Page, Segmented, Stat } from "../components/ui";
 import { C, MonthlyChart, monthSpan } from "../components/charts";
-import { DataTable, type Col } from "../components/DataTable";
+import { DataTable, type Col, type Facet, type Preset } from "../components/DataTable";
+import { scrollToSection, useIntent } from "../lib/focus";
+import { Sens, usePrivacy } from "../lib/privacy";
+import { SOFT_CSS, Swap } from "../components/anim";
 
 interface IpRow {
   ip: string;
@@ -30,38 +32,40 @@ interface NetRow {
   logins: number;
 }
 
+type View = "events" | "ip" | "net";
 const LOGIN_TYPES = new Set(["Login", "Authentication"]);
-
-export function TagPicker({ ip, value, onChange }: { ip: string; value?: string; onChange: (ip: string, v: IpTag | null) => void }) {
-  const opts: { v: IpTag; label: string; cls: string }[] = [
-    { v: "mine", label: "Mine", cls: "bg-win-soft text-win" },
-    { v: "unsure", label: "?", cls: "bg-warn-soft text-warn" },
-    { v: "not-mine", label: "Not me", cls: "bg-accent-soft text-accent" },
-  ];
-  return (
-    <div className="inline-flex gap-1">
-      {opts.map((o) => (
-        <button
-          key={o.v}
-          onClick={() => onChange(ip, value === o.v ? null : o.v)}
-          className={`rounded-md border px-2 py-0.5 text-[12px] font-medium transition-colors ${value === o.v ? `${o.cls} border-transparent` : "border-line text-faint hover:text-ink"}`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 export function Security() {
   const { has } = useAccount();
   const { f } = useSettings();
+  const pv = usePrivacy();
+  const guard = useDateGuard();
+  const created = useCreated();
   const audit = useRecords(DS.audit);
-  const loginsAll = useRecords(DS.logins, false);
+  const auditAll = useRecords(DS.audit, false);
   const logins = useRecords(DS.logins);
-  const tags = useAnnotations("ip");
-  const [showAll, setShowAll] = useState(false);
-  const [ipFilter, setIpFilter] = useState<"all" | "untagged" | "mine" | "not-mine">("all");
+  const DEFAULT_KINDS = () => new Set<AuditKind>(AUDIT_KINDS.filter((k) => k.on).map((k) => k.id));
+  const [kinds, setKinds] = useState<Set<AuditKind>>(DEFAULT_KINDS);
+  // One login card, three angles on the same events: every event, grouped by IP, grouped by network.
+  const [view, setView] = useState<View>("events");
+  const maskIp = useMaskIp();
+  // The creation IP is fully hidden, so its network (its first two parts) is too.
+  const creationIp = useCreationIp();
+  const creationNet = creationIp && creationIp !== "Unknown" ? networkOf(creationIp) : null;
+  // The IP to filter by, kept raw: the chip's label is masked at render time, so it follows privacy mode.
+  const [ipPick, setIpPick] = useState<string | null>(null);
+  const [loginPreset, setLoginPreset] = useState<Preset<Rec> | null>(null);
+  const show = (v: View) => {
+    setView(v);
+    scrollToSection("logins");
+  };
+  // From Overview's IP rows: the By IP view filtered to that one address.
+  useIntent("security", !logins.loading, (i) => {
+    if (i.filter !== "ip" || !i.value) return;
+    const ip = i.value;
+    setView("ip");
+    setIpPick(ip);
+  });
 
   const ipRows = useMemo<IpRow[]>(() => {
     const m = new Map<string, IpRow & { appset: Set<string> }>();
@@ -79,43 +83,11 @@ export function Security() {
     }
     return [...m.values()].map(({ appset, ...r }) => ({ ...r, apps: [...appset].sort().join(", ") }));
   }, [logins.data]);
-
-  const firstSeen = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const l of loginsAll.all) if (!m.has(l.ip_address)) m.set(l.ip_address, l._t!);
-    return m;
-  }, [loginsAll.all]);
-
-  const alerts = useMemo(
-    () =>
-      audit.data
-        .filter((a) => a.event_type === "ANOMALOUS_ACTIVITY")
-        .map((a) => {
-          const t = Date.parse(a._t!);
-          const near = new Map<string, number>();
-          for (const l of loginsAll.all) {
-            const d = Date.parse(l._t!) - t;
-            if (d > -24 * 3600e3 && d < 6 * 3600e3 && l.ip_address !== "Unknown") near.set(l.ip_address, (near.get(l.ip_address) ?? 0) + 1);
-          }
-          return { a, ips: [...near.entries()].sort((x, y) => y[1] - x[1]) };
-        }),
-    [audit.data, loginsAll.all],
+  // Overview's IPs are all-time; say so when the picked one isn't in the selected period, instead of an unexplained empty table.
+  const ipPreset = useMemo<Preset<IpRow> | null>(
+    () => (ipPick ? { label: `${maskIp(ipPick)}${ipRows.some((r) => r.ip === ipPick) ? "" : " · not in this period"}`, test: (r) => r.ip === ipPick } : null),
+    [ipPick, maskIp, ipRows],
   );
-
-  const timeline = useMemo(() => audit.data.map((a) => ({ a, ...auditInfo(a) })).filter((x) => showAll || x.level >= 1).reverse(), [audit.data, showAll]);
-
-  const monthly = useMemo(() => {
-    const ev = new Map<string, number>();
-    const fresh = new Map<string, number>();
-    for (const l of logins.data) if (l._t) ev.set(f.monthKey(l._t), (ev.get(f.monthKey(l._t)) ?? 0) + 1);
-    for (const [ip, t] of firstSeen) if (ip !== "Unknown" && logins.data.length && t >= logins.data[0]._t! && t <= logins.data[logins.data.length - 1]._t!) fresh.set(f.monthKey(t), (fresh.get(f.monthKey(t)) ?? 0) + 1);
-    return { ev: monthSpan([...ev.keys()]).map((k) => ({ month: k, n: ev.get(k) ?? 0 })), fresh: monthSpan([...ev.keys()]).map((k) => ({ month: k, n: fresh.get(k) ?? 0 })) };
-  }, [logins.data, firstSeen, f]);
-
-  const pw = audit.data.filter((a) => a.event_type === "PASSWORD_CHANGE" || a.event_type === "PASSWORD_RESET").length;
-  const tagged = ipRows.filter((r) => tags.map[r.ip]).length;
-  const notMine = ipRows.filter((r) => tags.map[r.ip] === "not-mine").length;
-  const shownIps = ipRows.filter((r) => (ipFilter === "all" ? true : ipFilter === "untagged" ? !tags.map[r.ip] : tags.map[r.ip] === ipFilter));
 
   const networks = useMemo<NetRow[]>(() => {
     const m = new Map<string, NetRow>();
@@ -131,215 +103,267 @@ export function Security() {
     }
     return [...m.values()];
   }, [ipRows]);
-  const netTag = (n: NetRow): string | undefined => {
-    const t = new Set(n.ips.map((r) => tags.map[r.ip] ?? ""));
-    return t.size === 1 ? [...t][0] || undefined : "mixed";
+
+  const typed = useMemo(() => dedupeAudit(audit.data).map((a) => ({ a, kind: auditKind(a), ...auditInfo(a) })), [audit.data]);
+  const kindCount = useMemo(() => {
+    const m = new Map<AuditKind, number>();
+    for (const x of typed) m.set(x.kind, (m.get(x.kind) ?? 0) + 1);
+    return m;
+  }, [typed]);
+  const timeline = useMemo(() => typed.filter((x) => kinds.has(x.kind)).reverse(), [typed, kinds]);
+  const kindKey = [...kinds].sort().join();
+  const shownKinds = AUDIT_KINDS.filter((k) => kindCount.get(k.id));
+  const allOn = shownKinds.every((k) => kinds.has(k.id));
+  const toggleKind = (k: AuditKind) =>
+    setKinds((s) => {
+      const n = new Set(s);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
+    });
+
+  const monthly = useMemo(() => {
+    const ev = new Map<string, number>();
+    for (const l of logins.data) if (l._t) ev.set(f.monthKey(l._t), (ev.get(f.monthKey(l._t)) ?? 0) + 1);
+    return monthSpan([...ev.keys()]).map((k) => ({ month: k, n: ev.get(k) ?? 0 }));
+  }, [logins.data, f]);
+
+  // Riot logs an email change as "user field changed: emailAddress" (it never says from what to what).
+  // Signing up records the first email as a "change" minutes after the account is created: that's not a
+  // change, so anything within a day of creation is left out.
+  const signUpEnd = created ? Date.parse(created) + 864e5 : -Infinity;
+  const emailEvents = audit.data.filter((a) => a.event_type === "USER_FIELD_CHANGED" && a.description === "emailAddress" && Date.parse(a._t ?? "") > signUpEnd);
+  const emailCh = emailEvents.length;
+  const lastEmail = emailEvents.at(-1)?._t ?? null;
+  const showEmail = () => {
+    setKinds(new Set<AuditKind>(["email"]));
+    scrollToSection("timeline");
   };
-  const tagNetwork = (n: NetRow, v: IpTag | null) => tags.setMany(Object.fromEntries(n.ips.filter((r) => r.ip !== "Unknown").map((r) => [r.ip, v])));
-  const netCols: Col<NetRow>[] = [
-    { id: "net", header: "Network", value: (n) => n.net, cell: (n) => <span className="num text-[13px] font-medium">{n.net}</span> },
-    {
-      id: "tag",
-      header: "Tag whole network",
-      value: (n) => netTag(n) ?? "",
-      cell: (n) => (
-        <span className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-          <TagPicker ip={n.net} value={netTag(n) === "mixed" ? undefined : netTag(n)} onChange={(_, v) => tagNetwork(n, v)} />
-          {netTag(n) === "mixed" && <Badge tone="warn">mixed</Badge>}
-        </span>
-      ),
-    },
-    { id: "ips", header: "IPs", value: (n) => n.ips.length, mono: true, align: "right" },
-    { id: "first", header: "First seen", value: (n) => n.first, cell: (n) => <span className="num">{f.date(n.first)}</span> },
-    { id: "last", header: "Last seen", value: (n) => n.last, cell: (n) => <span className="num">{f.date(n.last)}</span> },
-    { id: "events", header: "Events", value: (n) => n.events, mono: true, align: "right" },
-    { id: "logins", header: "Logins", value: (n) => n.logins, mono: true, align: "right" },
-  ];
-  const incidents = useMemo(() => buildIncidents(audit.data, loginsAll.all).reverse(), [audit.data, loginsAll.all]);
+  // Always all-time: "when did I last change my password" shouldn't depend on the period filter.
+  const pwAll = useMemo(() => auditAll.all.filter(isPwEvent).length, [auditAll.all]);
+  const lastPw = useMemo(() => auditAll.all.filter(isPwEvent).at(-1)?._t ?? null, [auditAll.all]);
+  const pwAge = lastPw ? (Date.now() - Date.parse(lastPw)) / 864e5 : null;
+  const showPw = () => {
+    setKinds(new Set<AuditKind>(["password"]));
+    scrollToSection("timeline");
+  };
 
   const ipCols: Col<IpRow>[] = [
-    { id: "ip", header: "IP address", value: (r) => r.ip, cell: (r) => <span className="num text-[13px]">{r.ip}</span> },
-    { id: "tag", header: "Is this you?", value: (r) => tags.map[r.ip] ?? "", cell: (r) => <TagPicker ip={r.ip} value={tags.map[r.ip]} onChange={tags.set} /> },
-    { id: "first", header: "First seen", value: (r) => r.first, cell: (r) => <span className="num">{f.date(r.first)}</span> },
-    { id: "last", header: "Last seen", value: (r) => r.last, cell: (r) => <span className="num">{f.date(r.last)}</span> },
+    { id: "ip", header: "IP address", secret: true, value: (r) => r.ip, cell: (r) => <Sens className="num text-[13px]">{maskIp(r.ip)}</Sens> },
+    { id: "first", header: "First seen", value: (r) => r.first, cell: (r) => <Sens className="num">{guard(r.first, f.date(r.first))}</Sens> },
+    { id: "last", header: "Last seen", value: (r) => r.last, cell: (r) => <Sens className="num">{guard(r.last, f.date(r.last))}</Sens> },
     { id: "events", header: "Events", value: (r) => r.events, mono: true, align: "right" },
     { id: "logins", header: "Logins", value: (r) => r.logins, mono: true, align: "right" },
     { id: "apps", header: "Apps", wrap: true, value: (r) => r.apps, cell: (r) => <span className="text-[12.5px] text-muted">{r.apps}</span> },
     { id: "kind", header: "Type", value: (r) => r.kind },
   ];
-
+  const netCols: Col<NetRow>[] = [
+    { id: "net", header: "Network", secret: true, value: (n) => n.net, cell: (n) => <Sens className="num text-[13px] font-medium">{n.net === creationNet && pv.hidden ? pv.secret(n.net) : n.net}</Sens> },
+    { id: "ips", header: "IPs", value: (n) => n.ips.length, mono: true, align: "right" },
+    { id: "first", header: "First seen", value: (n) => n.first, cell: (n) => <Sens className="num">{guard(n.first, f.date(n.first))}</Sens> },
+    { id: "last", header: "Last seen", value: (n) => n.last, cell: (n) => <Sens className="num">{guard(n.last, f.date(n.last))}</Sens> },
+    { id: "events", header: "Events", value: (n) => n.events, mono: true, align: "right" },
+    { id: "logins", header: "Logins", value: (n) => n.logins, mono: true, align: "right" },
+  ];
   const loginCols: Col<Rec>[] = [
-    { id: "t", header: `Time (${f.tzLabel})`, value: (r) => r._t, cell: (r) => <span className="num">{f.dateTime(r._t, true)}</span> },
+    { id: "t", header: `Time (${f.tzLabel})`, value: (r) => r._t, cell: (r) => <Sens className="num">{guard(r._t, f.dateTime(r._t, true))}</Sens> },
     { id: "ev", header: "Event", value: (r) => r.event_type },
-    { id: "ip", header: "IP address", value: (r) => r.ip_address, cell: (r) => <span className="num text-[13px]">{r.ip_address}</span> },
-    { id: "tag", header: "Tag", value: (r) => tags.map[r.ip_address] ?? "", cell: (r) => (tags.map[r.ip_address] === "mine" ? <Badge tone="win">mine</Badge> : tags.map[r.ip_address] === "not-mine" ? <Badge tone="accent">not me</Badge> : tags.map[r.ip_address] === "unsure" ? <Badge tone="warn">unsure</Badge> : null) },
+    { id: "ip", header: "IP address", secret: true, value: (r) => r.ip_address, cell: (r) => <Sens className="num text-[13px]">{maskIp(r.ip_address)}</Sens> },
     { id: "app", header: "App", value: (r) => r.product },
   ];
+  const { loginFacets, ipFacets, netFacets } = useMemo(() => {
+    const year = (t?: string | null) => (t ? f.monthKey(t).slice(0, 4) : null);
+    const newest = (a: string, b: string) => b.localeCompare(a);
+    const loginFacets: Facet<Rec>[] = [
+    { id: "year", label: "Year", value: (r) => year(r._t), order: newest },
+    { id: "ev", label: "Event", value: (r) => r.event_type },
+    { id: "app", label: "App", value: (r) => r.product },
+  ];
+  const ipFacets: Facet<IpRow>[] = [
+    { id: "year", label: "First seen", value: (r) => year(r.first), order: newest },
+    { id: "kind", label: "Type", value: (r) => r.kind },
+  ];
+    const netFacets: Facet<NetRow>[] = [{ id: "year", label: "First seen", value: (n) => year(n.first), order: newest }];
+    return { loginFacets, ipFacets, netFacets };
+  }, [f]);
 
   if (!has(DS.logins) && !has(DS.audit)) return <Page code="04 / Security" title="Security"><Card><Empty title="No security data" /></Card></Page>;
 
+  const VIEWS: Record<View, string> = { events: "Every login event", ip: "Grouped by IP address", net: "Grouped by network" };
   return (
-    <Page code="04 / Security" title="Account security" loading={audit.loading || loginsAll.loading || logins.loading} sub={`Logins, IP addresses and account changes · times in ${f.tzLabel}`}>
-      <Stat label="Riot alerts" value={alerts.length} tone={alerts.length ? "accent" : "default"} sub="“suspicious activity” flags" />
-      <Stat label="Password changes" value={pw} tone={pw ? "warn" : "default"} sub="changes + email resets" />
-      <Stat label="IP addresses" value={ipRows.length} sub={`${tagged} tagged · ${ipRows.length - tagged} untagged`} />
-      <Stat label="Marked “not me”" value={notMine} tone={notMine ? "accent" : "win"} sub={notMine ? "review payments from these IPs" : "tag IPs below"} />
+    <Page code="04 / Security" title="Account security" loading={audit.loading || auditAll.loading || logins.loading} sub={`Logins, IP addresses and account changes · times in ${f.tzLabel}`}>
+      <Stat
+        label="Email changes"
+        onClick={emailCh ? showEmail : undefined}
+        action="Show only email changes in the timeline"
+        value={emailCh || "No change"}
+        tone={emailCh ? "warn" : "default"}
+        sub={<Sens>{lastEmail ? `last on ${guard(lastEmail, f.date(lastEmail))}` : "same email since sign-up"}</Sens>}
+      />
+      <Stat
+        label="Last password change"
+        onClick={lastPw ? showPw : undefined}
+        action="Show only password changes in the timeline"
+        value={lastPw ? guard(lastPw, f.relative(lastPw)) : "Never"}
+        tone={pwAge == null || pwAge > 365 ? "warn" : "default"}
+        sub={<Sens>{lastPw ? `${guard(lastPw, f.date(lastPw))} · ${pwAll} change${pwAll === 1 ? "" : "s"} in total${pwAge! > 365 ? " · worth changing" : ""}` : "not in your export"}</Sens>}
+      />
+      <Stat label="Login events" onClick={logins.data.length ? () => show("events") : undefined} action="Show every login event" value={logins.data.length} sub="in this period" />
+      <Stat label="IP addresses" onClick={ipRows.length ? () => show("ip") : undefined} action="Show logins grouped by IP" value={ipRows.length} sub={`across ${networks.length} network${networks.length === 1 ? "" : "s"}`} />
 
-      {alerts.length > 0 && (
-        <Card span={12} title="Riot flagged suspicious activity" hint="IPs that logged in from 24 h before to 6 h after each alert. New = first time this IP ever appeared." accent>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {[...alerts].reverse().map(({ a, ips }) => (
-              <div key={a._t} className="rounded-xl border border-line bg-panel-2 p-4">
-                <div className="flex items-center gap-2 text-accent">
-                  <AlertTriangle size={16} />
-                  <span className="num font-medium">{f.dateTime(a._t)}</span>
-                </div>
-                <ul className="mt-3 space-y-2">
-                  {ips.length === 0 && <li className="text-muted">No logins recorded around this time.</li>}
-                  {ips.map(([ip, n]) => {
-                    const fs = firstSeen.get(ip);
-                    const isNew = fs && Math.abs(Date.parse(fs) - Date.parse(a._t!)) < 3 * 864e5;
-                    return (
-                      <li key={ip} className="flex items-center justify-between gap-2">
-                        <span className="flex min-w-0 items-center gap-1.5 text-[12.5px]" title={ip}>
-                          <span className="num truncate">{ip}</span>
-                          <span className="num shrink-0 text-faint">×{n}</span>
-                          {isNew && <Badge tone="accent">new</Badge>}
-                        </span>
-                        <span className="shrink-0">
-                          <TagPicker ip={ip} value={tags.map[ip]} onChange={tags.set} />
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
 
-      {incidents.length > 0 && (
-        <Card span={12} title="Security incidents" hint="Account changes that happened close together (within 2 h), with IPs seen for the first time around them">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {incidents.map((inc) => (
-              <div key={inc.start} className={`rounded-xl border p-4 ${inc.severity === "alert" ? "border-accent/50 bg-accent-soft" : "border-line bg-panel-2"}`}>
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="num font-medium">{f.date(inc.start)}</span>
-                  <span className="num text-[12px] text-muted">
-                    {f.time(inc.start)}
-                    {inc.end !== inc.start && ` – ${f.time(inc.end)}`}
-                  </span>
-                </div>
-                <ol className="mt-2 space-y-1 text-[13px]">
-                  {inc.events.map((e, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${e.level === 2 ? "bg-accent" : "bg-warn"}`} />
-                      <span className={e.level === 2 ? "font-semibold text-accent" : ""}>{e.label}</span>
-                    </li>
-                  ))}
-                </ol>
-                {inc.newIps.length > 0 && (
-                  <div className="mt-3 border-t border-line pt-2">
-                    <div className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-muted">New IPs around this time</div>
-                    <ul className="mt-1 space-y-1">
-                      {inc.newIps.map(({ ip }) => (
-                        <li key={ip} className="flex items-center justify-between gap-2 text-[12.5px]">
-                          <span className="num truncate" title={ip}>
-                            {ip}
-                          </span>
-                          <span className="shrink-0">
-                            <TagPicker ip={ip} value={tags.map[ip]} onChange={tags.set} />
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
+      <Card span={12} title="Login activity per month" hint="Click a month to see its login events">
+        <MonthlyChart
+          onPick={(m) => {
+            setView("events");
+            setLoginPreset({ label: f.monthLabel(m), test: (r) => !!r._t && f.monthKey(r._t) === m });
+            scrollToSection("logins");
+          }}
+          data={monthly}
+          series={[{ key: "n", label: "Login events", color: C.info }]}
+          height={260}
+        />
+      </Card>
 
-      <Card span={5} title="Security timeline" right={<Segmented value={showAll ? "all" : "key"} onChange={(v) => setShowAll(v === "all")} options={[{ value: "key", label: "Important" }, { value: "all", label: "Everything" }]} />} pad={false}>
+      <Card
+        id="timeline"
+        span={12}
+        title="Account changes"
+        hint="Newest first · filter on the right"
+        pad={false}
+      >
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_300px]">
+        <Swap k={kindKey} className="min-w-0">
         <ol className="scroll-thin max-h-[560px] overflow-y-auto px-5 py-3">
           {timeline.map(({ a, label, level, detail }, i) => (
             <li key={i} className="grid grid-cols-[92px_14px_1fr] gap-2 py-1.5">
-              <span className="num pt-0.5 text-[12px] text-muted">{f.date(a._t)}</span>
+              {/* The account-created event dates the account, so privacy mode hides its date like the Overview does. */}
+              <span className="num pt-0.5 text-[12px] text-muted">
+                <Sens>{a.event_type === "CREATED" ? pv.secret(f.date(a._t)) : guard(a._t, f.date(a._t))}</Sens>
+              </span>
               <span className={`mt-1.5 h-2.5 w-2.5 rounded-full ${level === 2 ? "bg-accent" : level === 1 ? "bg-warn" : "bg-line-strong"}`} />
               <span className={level === 2 ? "font-semibold text-accent" : level === 1 ? "font-medium" : "text-muted"}>
                 {label}
-                {detail && <span className="text-muted"> · {detail}</span>}
-                <span className="num ml-2 text-[11.5px] text-faint">{f.time(a._t)}</span>
+                {/* Details can hold emails, phone numbers or old values: hidden in privacy mode. */}
+                {detail && (
+                  <span className="text-muted">
+                    {" · "}
+                    <Sens>{pv.secret(detail)}</Sens>
+                  </span>
+                )}
+                {a.event_type !== "CREATED" || !pv.hidden ? (
+                  <span className="num ml-2 text-[11.5px] text-faint">
+                    <Sens>{guard(a._t, f.time(a._t))}</Sens>
+                  </span>
+                ) : null}
               </span>
             </li>
           ))}
-          {!timeline.length && <li className="py-10 text-center text-muted">Nothing in this period.</li>}
+          {!timeline.length && <li className="py-10 text-center text-muted">{kinds.size ? "Nothing of these kinds in this period." : "Nothing selected · pick the kinds of change you want on the right."}</li>}
         </ol>
-      </Card>
+        </Swap>
 
-      <div className="col-span-12 grid gap-4 xl:col-span-7">
-        <Card title="Login activity per month">
-          <MonthlyChart data={monthly.ev} series={[{ key: "n", label: "Login events", color: C.info }]} height={220} />
-        </Card>
-        <Card title="New IP addresses per month" hint="Spikes mean logins from places not seen before">
-          <MonthlyChart data={monthly.fresh} series={[{ key: "n", label: "New IPs", color: C.warn }]} height={200} />
-        </Card>
-      </div>
-
-      <Card span={12} title="Networks" hint="IPs grouped by provider range (IPv4 first two numbers, IPv6 first two blocks). Tag a whole network in one click; click a row to see its IPs." pad={false}>
-        <DataTable
-          rows={networks}
-          cols={netCols}
-          initialSort={{ id: "last", desc: true }}
-          filename="ip-networks"
-          searchPlaceholder="Search network…"
-          rowTone={(n) => (netTag(n) === "not-mine" ? "accent" : undefined)}
-          expand={(n) => (
-            <ul className="grid gap-x-6 gap-y-1 pl-6 sm:grid-cols-2 xl:grid-cols-3">
-              {n.ips.map((r) => (
-                <li key={r.ip} className="flex items-center justify-between gap-2 text-[12.5px]">
-                  <span className="num truncate" title={r.ip}>
-                    {r.ip}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                    <span className="num text-faint">{f.date(r.last)}</span>
-                    <TagPicker ip={r.ip} value={tags.map[r.ip]} onChange={tags.set} />
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        />
-      </Card>
-
-      <Card span={12} title="IP addresses" hint="Tag each IP — tags are saved in your vault and used on the Money page" pad={false}>
-        <DataTable
-          rows={shownIps}
-          cols={ipCols}
-          initialSort={{ id: "last", desc: true }}
-          filename="ip-addresses"
-          searchPlaceholder="Search IP, app…"
-          rowTone={(r) => (tags.map[r.ip] === "not-mine" ? "accent" : undefined)}
-          toolbar={
+          {/* The card's controls: presets, one row per kind of change, and the dot legend. */}
+          <aside className="flex flex-col gap-4 border-t border-line p-5 lg:border-l lg:border-t-0">
             <Segmented
-              value={ipFilter}
-              onChange={setIpFilter}
-              options={[
-                { value: "all", label: "All" },
-                { value: "untagged", label: "Untagged" },
-                { value: "mine", label: "Mine" },
-                { value: "not-mine", label: "Not me" },
-              ]}
+              value={allOn ? "all" : kindKey === [...DEFAULT_KINDS()].sort().join() ? "key" : ("custom" as string)}
+              onChange={(v) => setKinds(v === "all" ? new Set(shownKinds.map((k) => k.id)) : DEFAULT_KINDS())}
+              options={[{ value: "key", label: "Important" }, { value: "all", label: "Everything" }]}
             />
-          }
-        />
+            <div>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-[11.5px] font-semibold uppercase tracking-[0.12em] text-muted">Show</span>
+                <button
+                  type="button"
+                  onClick={() => setKinds(kinds.size ? new Set() : new Set(shownKinds.map((k) => k.id)))}
+                  className={`rounded-full px-2 py-0.5 text-[12px] text-muted transition-colors ${SOFT_CSS} hover:bg-panel-2 hover:text-ink`}
+                >
+                  <Swap k={kinds.size ? "none" : "all"} className="flex items-center gap-1">
+                    {kinds.size ? <X size={12} /> : <Check size={12} />}
+                    {kinds.size ? "Select none" : "Select all"}
+                  </Swap>
+                </button>
+              </div>
+              <div role="group" aria-label="Show these changes" className="-mx-2 space-y-0.5">
+                {shownKinds.map((k) => {
+                  const on = kinds.has(k.id);
+                  return (
+                    <button
+                      key={k.id}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => toggleKind(k.id)}
+                      className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors ${SOFT_CSS} hover:bg-panel-2 ${on ? "text-ink" : "text-muted"}`}
+                    >
+                      <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border transition-colors ${SOFT_CSS} ${on ? "border-accent bg-accent text-white" : "border-line-strong"}`}>
+                        <Check size={11} strokeWidth={3} className={`transition-[opacity,transform] ${SOFT_CSS} ${on ? "scale-100 opacity-100" : "scale-50 opacity-0"}`} />
+                      </span>
+                      <span className="flex-1">{k.label}</span>
+                      <span className="num text-[12px] text-faint">{kindCount.get(k.id)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="mt-auto border-t border-line pt-3 text-[12px] text-muted">
+              <TimelineLegend />
+            </div>
+          </aside>
+        </div>
       </Card>
 
-      <Card span={12} title="Every login event" pad={false}>
-        <DataTable rows={logins.data} cols={loginCols} initialSort={{ id: "t", desc: true }} filename="login-events" pageSize={50} rowTone={(r) => (tags.map[r.ip_address] === "not-mine" ? "accent" : undefined)} />
+
+
+      <Card
+        id="logins"
+        span={12}
+        title="Logins"
+        hint={VIEWS[view]}
+        right={<Segmented value={view} onChange={setView} options={[{ value: "events", label: "Events" }, { value: "ip", label: "By IP" }, { value: "net", label: "By network" }]} />}
+        pad={false}
+      >
+        <Swap k={view}>
+          {view === "events" ? (
+            <DataTable rows={logins.data} cols={loginCols} preset={loginPreset} onClearPreset={() => setLoginPreset(null)} facets={loginFacets} initialSort={{ id: "t", desc: true }} filename="login-events" />
+          ) : view === "ip" ? (
+            <DataTable rows={ipRows} cols={ipCols} preset={ipPreset} onClearPreset={() => setIpPick(null)} facets={ipFacets} initialSort={{ id: "last", desc: true }} filename="ip-addresses" searchPlaceholder="Search IP, app…" />
+          ) : (
+            <DataTable
+              rows={networks}
+              cols={netCols}
+              facets={netFacets}
+              initialSort={{ id: "last", desc: true }}
+              filename="ip-networks"
+              searchPlaceholder="Search network…"
+              expand={(n) => (
+                <ul className="grid gap-x-6 gap-y-1 pl-6 sm:grid-cols-2 xl:grid-cols-3">
+                  {n.ips.map((r) => (
+                    <li key={r.ip} className="flex items-center justify-between gap-2 text-[12.5px]">
+                      <Sens className="num truncate">{maskIp(r.ip)}</Sens>
+                      <Sens className="num shrink-0 text-faint">{guard(r.last, f.date(r.last))}</Sens>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            />
+          )}
+        </Swap>
       </Card>
     </Page>
+  );
+}
+
+/** What the timeline's dot colours mean. */
+function TimelineLegend() {
+  const items: [string, string][] = [["bg-accent", "Flagged by Riot"], ["bg-warn", "Important change"], ["bg-line-strong", "Other"]];
+  return (
+    <span className="flex flex-wrap gap-x-4 gap-y-1">
+      {items.map(([c, l]) => (
+        <span key={l} className="inline-flex items-center gap-1.5">
+          <span className={`h-2 w-2 rounded-full ${c}`} />
+          {l}
+        </span>
+      ))}
+    </span>
   );
 }

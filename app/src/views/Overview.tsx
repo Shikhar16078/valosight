@@ -1,14 +1,20 @@
-import { CreditCard, Gavel, ShieldAlert, Sparkles } from "lucide-react";
-import { useMemo, type ReactElement } from "react";
+import { AlertTriangle, Check, CheckCircle2, Copy, CreditCard, Gavel, ShieldAlert, Sparkles } from "lucide-react";
+import { useCreated, useDateGuard, useMaskIp } from "../lib/privacy-dates";
+import { useMemo, useState, type ReactElement } from "react";
 import { useAccount, useRecords } from "../lib/account";
 import { useSettings } from "../lib/settings";
-import { ConvertedChips } from "../lib/convert";
-import { DS, amountPaid, auditInfo, classifyAllVP, classifyOther, groupUpgrades, isRealMatch, isRP, isVP, matchMinutes, money, n0, parseUpgrade, PENALTY } from "../lib/valorant";
-import { Badge, Card, KV, Page, Stat } from "../components/ui";
-import { C, CalendarHeatmap, MonthlyChart, monthSpan } from "../components/charts";
+import { SpendFigure } from "../lib/convert";
+import { DS, vpGroupOf, isActivePenalty, winStreaks, amountPaid, auditInfo, classifyAllVP, dedupeAudit, groupUpgrades, isRealMatch, isRP, matchMinutes, money, n0, parseUpgrade, payMethod, PENALTY, queueName } from "../lib/valorant";
+import { allocateVP } from "../lib/fifo";
+import { goTo } from "../lib/focus";
+import { HIDDEN, PrivacyToggle, Sens, usePrivacy } from "../lib/privacy";
+import { Card, KV, Page } from "../components/ui";
+import { SOFT_CSS } from "../components/anim";
 
 export function Overview() {
-  const { detail, years, range } = useAccount();
+  const { detail, range, inRange } = useAccount();
+  const pv = usePrivacy();
+  const maskIp = useMaskIp();
   const { f } = useSettings();
   const info = (detail?.snapshots[DS.info] ?? {}) as Record<string, string>;
   const pay = useRecords(DS.payments);
@@ -22,13 +28,9 @@ export function Overview() {
   // (the same rule as the top bar: a page shows when any of its datasets has records).
   const has = (...ds: string[]) => ds.some((d) => detail?.datasets.some((x) => x.dataset === d && x.count > 0));
   const page = (to: string, ...ds: string[]) => (has(...ds) ? to : undefined);
+  const toColl = !!page("collection", DS.store);
 
-  const created = useMemo(() => {
-    const c = auditAll.all.find((r) => r.event_type === "CREATED");
-    if (c) return c._t;
-    const firsts = detail?.datasets.map((d) => d.first).filter(Boolean) as string[];
-    return firsts?.sort()[0] ?? null;
-  }, [auditAll.all, detail]);
+  const created = useCreated();
 
   const spend = useMemo(() => {
     const by = new Map<string, number>();
@@ -41,110 +43,308 @@ export function Overview() {
   const wins = games.filter((m) => m.game_outcome === "Win").length;
   const decided = games.filter((m) => m.game_outcome === "Win" || m.game_outcome === "Loss").length;
   const hours = games.reduce((a, m) => a + (matchMinutes(m) ?? 0), 0) / 60;
+  const play = useMemo(() => {
+    const best = winStreaks(games).bw;
+    const sorted = [...games].sort((a, b) => (a._t ?? "").localeCompare(b._t ?? ""));
+    const mins = games.map(matchMinutes).filter((x): x is number => x != null);
+    const days = new Set(sorted.map((g) => (g._t ? f.dayKey(g._t) : ""))).size;
+    return { best, longest: Math.max(0, ...mins), first: sorted[0]?._t ?? null, last: sorted.at(-1)?._t ?? null, days };
+  }, [games, f]);
+  const favMode = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const g of games) m.set(queueName(g), (m.get(queueName(g)) ?? 0) + 1);
+    const top = [...m.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (!top) return null;
+    const inMode = games.filter((g) => queueName(g) === top[0]);
+    const w = inMode.filter((g) => g.game_outcome === "Win").length;
+    const d = inMode.filter((g) => g.game_outcome === "Win" || g.game_outcome === "Loss").length;
+    return { name: top[0], n: top[1], rate: d ? Math.round((w / d) * 100) : null };
+  }, [games]);
+
+  // ---- 1. Account: IPs (all time; Riot's ownership form asks about them) ----
+  const loginsAll = useRecords(DS.logins, false);
+  const ipInfo = useMemo(() => {
+    const ls = loginsAll.all.filter((l) => l._t && l.ip_address && l.ip_address !== "Unknown");
+    if (!ls.length) return null;
+    // The creation IP is the very first login's, even when Riot recorded it as "Unknown": never a later one.
+    const first = loginsAll.all.find((l) => l._t) ?? ls[0];
+    const count = new Map<string, number>();
+    for (const l of ls) count.set(l.ip_address, (count.get(l.ip_address) ?? 0) + 1);
+    const [most, mostN] = [...count.entries()].sort((a, b) => b[1] - a[1])[0];
+    return { first, last: ls[ls.length - 1], most, mostN, unique: count.size, ips: [...count.keys()] };
+  }, [loginsAll.all]);
+  // Riot's login history starts when the account is made, so its first IP is the creation IP. If the first
+  // login is noticeably later than the creation date (history trimmed), say so instead of guessing.
+  const creationGap = (() => {
+    if (!ipInfo || !created) return null;
+    const d = Math.round((Date.parse(ipInfo.first._t ?? "") - Date.parse(created)) / 864e5);
+    return d > 1 ? (d >= 60 ? `${Math.round(d / 30.44)} months` : `${d} days`) : null;
+  })();
+
+  // ---- 2. Money: where it went (real money, via the oldest-VP-first estimate) ----
+  const payAll = useRecords(DS.payments, false);
+  const where = useMemo(() => {
+    const main = spend[0]?.[0];
+    if (!main) return null;
+    // The money paid in this period (in the main currency), split by what its VP bought, whenever that was.
+    // Counting by purchase date instead could pull in VP from older top-ups and pass 100%.
+    const by = new Map<string, number>([["Skins", 0], ["Battle passes", 0], ["Bundles", 0]]);
+    const label = (c: string) => vpGroupOf(c).label;
+    for (const [item, allocs] of allocateVP(payAll.all, store.all).byItem) {
+      for (const a of allocs) if (a.payment?.currency_code === main && inRange(a.payment._t)) by.set(label(item.category), (by.get(label(item.category)) ?? 0) + a.money);
+    }
+    const spentOnItems = [...by.values()].reduce((a, b) => a + b, 0);
+    const rows = [...by.entries()].filter(([, v]) => v > 0.5).map(([k, v]) => ({ k, v }));
+    const left = Math.max(0, spend[0][1] - spentOnItems);
+    if (left > 0.5) rows.push({ k: "Not spent yet", v: left });
+    const methods = new Map<string, number>();
+    for (const p of pay.data) if (p.currency_code === main) methods.set(payMethod(p.payment_method), (methods.get(payMethod(p.payment_method)) ?? 0) + amountPaid(p));
+    const topMethod = [...methods.entries()].sort((a, b) => b[1] - a[1])[0];
+    return { main, total: spend[0][1], rows, topMethod };
+  }, [spend, store.all, payAll.all, pay.data, inRange]);
+
+  const byYear = useMemo(() => {
+    const main = spend[0]?.[0];
+    const m = new Map<string, { amt: number; n: number }>();
+    for (const p of pay.data) {
+      if (p.currency_code !== main || !p._t) continue;
+      const y = f.monthKey(p._t).slice(0, 4);
+      const e = m.get(y) ?? { amt: 0, n: 0 };
+      e.amt += amountPaid(p);
+      e.n++;
+      m.set(y, e);
+    }
+    return [...m.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  }, [pay.data, spend, f]);
+
+  // ---- 3. Collection ----
+  const vpItems = useMemo(() => classifyAllVP(store.data, store.all), [store.data, store.all]);
+  const latestSkins = useMemo(() => vpItems.filter((x) => x.category === "Skin").sort((a, b) => (b.t ?? "").localeCompare(a.t ?? "")).slice(0, 5), [vpItems]);
   const coll = useMemo(() => {
-    const vp = classifyAllVP(store.data, store.all);
-    const bought = vp.filter((x) => x.category === "Skin");
     const ups = groupUpgrades(store.data.filter(isRP).map(parseUpgrade));
     ups.delete("Unknown skin");
-    const owned = new Set([...bought.map((x) => x.name), ...ups.keys()]);
-    const other = store.data.filter((r) => !isVP(r) && !isRP(r)).map(classifyOther);
+    const bought = vpItems.filter((x) => x.category === "Skin");
+    const passes = vpItems.filter((x) => x.category === "Battle Pass");
     return {
-      owned: owned.size,
-      bought: bought.length,
-      passes: vp.filter((x) => x.category === "Battle Pass").length,
-      passVP: vp.filter((x) => x.category === "Battle Pass").reduce((a, x) => a + x.cost, 0),
-      bundles: vp.filter((x) => x.category === "Bundle").length,
+      owned: new Set([...bought.map((x) => x.name), ...ups.keys()]).size,
+      skinVP: bought.reduce((a, x) => a + x.cost, 0),
+      passes: passes.length,
+      passVP: passes.reduce((a, x) => a + x.cost, 0),
+      bundles: vpItems.filter((x) => x.category === "Bundle").length,
       upgraded: ups.size,
-      maxed: [...ups.values()].filter((u) => u.maxLevel >= 4).length,
-      rp: store.data.filter(isRP).reduce((a, r) => a + (Number(r.spent_currency_amount) || 0), 0),
-      agents: other.filter((o) => o.kind === "Agent unlock").length,
-      otherItems: other.filter((o) => o.kind !== "Agent unlock").length,
     };
-  }, [store.data]);
-  const alerts = audit.data.filter((r) => r.event_type === "ANOMALOUS_ACTIVITY").length;
-  const ips = new Set(logins.data.map((l) => l.ip_address)).size;
+  }, [store.data, vpItems]);
 
-  const monthly = useMemo(() => {
-    const m = new Map<string, { w: number; l: number; o: number; spend: number }>();
-    const get = (k: string) => m.get(k) ?? (m.set(k, { w: 0, l: 0, o: 0, spend: 0 }), m.get(k)!);
-    for (const g of games) {
-      if (!g._t) continue;
-      const e = get(f.monthKey(g._t));
-      if (g.game_outcome === "Win") e.w++;
-      else if (g.game_outcome === "Loss") e.l++;
-      else e.o++;
-    }
-    return monthSpan([...m.keys()]).map((k) => ({ month: k, win: m.get(k)?.w ?? 0, loss: m.get(k)?.l ?? 0, other: m.get(k)?.o ?? 0 }));
-  }, [games, f]);
+  // ---- Needs attention (all time, so nothing important hides behind the period filter) ----
+  const attention = useMemo(() => {
+    const out: { text: string; to: string; tone: "accent" | "warn" }[] = [];
+    const alertsAll = auditAll.all.filter((r) => r.event_type === "ANOMALOUS_ACTIVITY").length;
+    if (alertsAll) out.push({ text: `${alertsAll} Riot “suspicious activity” alert${alertsAll === 1 ? "" : "s"}`, to: "security", tone: "accent" });
+    const activePen = pen.all.filter((p) => isActivePenalty(p.status)).length;
+    if (activePen) out.push({ text: `${activePen} active penalt${activePen === 1 ? "y" : "ies"}`, to: "conduct", tone: "accent" });
+    return out;
+  }, [auditAll.all, pen.all]);
 
   const feed = useMemo(() => {
-    const ev: { t: string; icon: ReactElement; text: string; tone: "accent" | "win" | "warn" | "info" | "neutral"; tag: string; to: string }[] = [];
+    const ev: { t: string; icon: ReactElement; text: string; tone: "accent" | "win" | "warn" | "info" | "neutral"; tag: string; to: string; created?: boolean }[] = [];
     for (const p of pay.data) ev.push({ t: p._t!, icon: <CreditCard size={14} />, text: `Paid ${money(amountPaid(p), p.currency_code, 0)} for ${Number(p.game_currency_granted).toLocaleString("en")} ${p.game_currency_type ?? ""}`, tone: "info", tag: "Payment", to: "money" });
-    for (const s of classifyAllVP(store.data, store.all)) if (s.category !== "Unknown") ev.push({ t: s.t, icon: <Sparkles size={14} />, text: s.category === "Battle Pass" ? s.pass! : s.name, tone: "neutral", tag: s.category, to: "collection" });
-    for (const a of audit.data) {
+    for (const s of vpItems) if (s.category !== "Unknown") ev.push({ t: s.t, icon: <Sparkles size={14} />, text: s.category === "Battle Pass" ? s.pass! : s.name, tone: "neutral", tag: s.category, to: "collection" });
+    for (const a of dedupeAudit(audit.data)) {
       const i = auditInfo(a);
-      if (i.level >= 1) ev.push({ t: a._t!, icon: <ShieldAlert size={14} />, text: i.label, tone: i.level === 2 ? "accent" : "warn", tag: "Security", to: "security" });
+      if (i.level >= 1) ev.push({ t: a._t!, icon: <ShieldAlert size={14} />, text: i.label, tone: i.level === 2 ? "accent" : "warn", tag: "Security", to: "security", created: a.event_type === "CREATED" });
     }
     for (const p of pen.data) ev.push({ t: p._t!, icon: <Gavel size={14} />, text: PENALTY[p.restriction_type] ?? p.restriction_type, tone: "warn", tag: "Penalty", to: "conduct" });
     return ev.filter((e) => e.t).sort((a, b) => b.t.localeCompare(a.t)).slice(0, 12);
-  }, [pay.data, store.data, audit.data, pen.data]);
+  }, [pay.data, vpItems, audit.data, pen.data]);
 
   const rangeLabel = range.kind === "all" ? "All time" : range.kind === "year" ? String(range.y) : `Last ${range.days} days of data`;
-  const name = info.game_name ? `${info.game_name}` : detail?.username;
+  // Without a Riot ID the heading falls back to the sign-in username, which privacy mode hides.
+  const name = info.game_name ? `${info.game_name}` : pv.name(detail?.username);
+  const age = (() => {
+    if (!created) return null;
+    const mo = Math.floor((Date.now() - Date.parse(created)) / (30.44 * 864e5));
+    return mo >= 12 ? `${Math.floor(mo / 12)}y ${mo % 12}m old` : `${mo}m old`;
+  })();
+  const WHERE_COLORS: Record<string, string> = { Skins: "var(--accent)", "Battle passes": "var(--win)", Bundles: "var(--info)", "Unknown items": "var(--warn)", "Not spent yet": "var(--line-strong)" };
+  const guard = useDateGuard();
+  const showIp = (ip: string) => goTo("security", { section: "logins", filter: "ip", value: ip });
 
   return (
     <Page code="00 / Overview" loading={pay.loading || mh.loading || store.loading || audit.loading || pen.loading || logins.loading} title="Account at a glance" sub={`${rangeLabel} · times in ${f.tzLabel}`}>
+      {/* 1. The account: who, since when, and from where (IPs matter for Riot's ownership questions). */}
       <Card span={12} accent pad={false}>
-        <div className="flex flex-wrap items-center gap-x-10 gap-y-4 px-6 py-5">
+        <div className="grid gap-x-10 gap-y-5 px-6 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           <div className="min-w-0">
-            <div className="font-display text-[34px] font-bold leading-none tracking-tight">
+            <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 font-display text-[34px] font-bold leading-none tracking-tight">
               {name}
               {info.tagline && <span className="text-muted">#{info.tagline}</span>}
             </div>
-            <div className="mt-2 flex flex-wrap gap-2 text-[13px] text-muted">
-              <Badge>login · {detail?.username}</Badge>
-              {region && <Badge tone="info">store · {region}</Badge>}
+            <PrivacyToggle className="mt-1 shrink-0" />
+            </div>
+            {/* The facts Riot support asks about, given equal weight. */}
+            <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
+              <Fact k="Username" v={pv.name(detail?.username) || "—"} hint="what you sign in with" />
+              <Fact k="Email" v={info.email ? pv.secret(info.email) : "—"} />
+              <Fact k="Account created" v={created ? pv.secret(f.date(created)) : "—"} hint={age ? pv.secret(age) : undefined} />
+              <Fact k="Store region" v={region ?? "—"} hint="country · currency Riot charges" />
+              <Fact wide k="Data covers" v={((a, b) => (pv.hidden ? `${HIDDEN} → ${f.date(b)}` : `${f.date(a)} → ${f.date(b)}`))(detail?.datasets.map((d) => d.first).filter(Boolean).sort()[0] as string, detail?.datasets.map((d) => d.last).filter(Boolean).sort().at(-1) as string)} small />
             </div>
           </div>
-          <div className="grid flex-1 grid-cols-2 gap-x-8 gap-y-1 sm:grid-cols-4">
-            <Meta k="Account created" v={f.date(created)} />
-            <Meta k="Data covers" v={`${f.date(detail?.datasets.map((d) => d.first).filter(Boolean).sort()[0] as string)} → ${f.date(detail?.datasets.map((d) => d.last).filter(Boolean).sort().at(-1) as string)}`} />
-            <Meta k="Last import" v={f.relative(detail?.imports[0]?.imported_at)} />
-            <Meta k="Imports" v={String(detail?.imports.length ?? 0)} />
+          <div className="min-w-0 rounded-xl border border-line bg-panel-2/50 p-4">
+            <div className="mb-2 flex items-baseline justify-between gap-3">
+              <span className="text-[11.5px] font-semibold uppercase tracking-[0.12em] text-muted">IP addresses</span>
+              {ipInfo && (
+                <a href="#security" className={`num text-[12px] text-muted transition-colors ${SOFT_CSS} hover:text-accent`}>
+                  {ipInfo.unique} different →
+                </a>
+              )}
+            </div>
+            {ipInfo ? (
+              <div className="divide-y divide-line">
+                <IpRow mask={maskIp} k="Account creation" secret ip={ipInfo.first.ip_address} sub={`${pv.secret(f.dateTime(ipInfo.first._t))}${creationGap && !pv.hidden ? ` · first recorded ${creationGap} after creation` : ""}`} strong onClick={() => showIp(ipInfo.first.ip_address)} />
+                <IpRow mask={maskIp} k="Most used" ip={ipInfo.most} sub={`${n0(ipInfo.mostN)} login events`} onClick={() => showIp(ipInfo.most)} />
+                <IpRow mask={maskIp} k="Latest" ip={ipInfo.last.ip_address} sub={guard(ipInfo.last._t, f.dateTime(ipInfo.last._t))} onClick={() => showIp(ipInfo.last.ip_address)} />
+              </div>
+            ) : (
+              <div className="py-4 text-center text-[13px] text-muted">This export has no login history.</div>
+            )}
           </div>
         </div>
       </Card>
 
-      <Stat
-        label="Real money spent"
-        value={spend[0]?.[1] ?? 0}
-        format={(v) => money(v, spend[0]?.[0] ?? "USD")}
-        tone="accent"
-        to={page("money", DS.payments)}
-        extra={spend[0] && <ConvertedChips v={spend[0][1]} cur={spend[0][0]} items={pay.data.filter((p) => p.currency_code === spend[0][0]).map((p) => ({ v: amountPaid(p), t: p._t }))} />}
-        sub={spend.length > 1 ? `+ ${spend.slice(1).map(([c, v]) => money(v, c)).join(", ")}` : `${pay.data.length} payments`}
-      />
-      <Stat label="Matches played" to={page("matches", DS.matches)} value={games.length} sub={`${hours.toFixed(0)} hours in game`} />
-      <Stat label="Win rate" to={page("matches", DS.matches)} value={decided ? (wins / decided) * 100 : 0} format={(v) => `${v.toFixed(1)}%`} tone="win" sub={`${wins.toLocaleString("en")} W · ${(decided - wins).toLocaleString("en")} L`} />
-      <Stat label="Security alerts" to={page("security", DS.logins, DS.audit)} value={alerts} tone={alerts ? "warn" : "default"} sub={`${ips} different IP addresses`} />
-
-      <Card span={8} title="Activity" hint="Matches per month (excluding range & tutorial)" to={page("matches", DS.matches)}>
-        {monthly.length ? (
-          <MonthlyChart
-            data={monthly}
-            series={[
-              { key: "win", label: "Wins", color: C.win, stack: true },
-              { key: "loss", label: "Losses", color: C.loss, stack: true },
-              { key: "other", label: "Draw / other", color: C.muted, stack: true },
-            ]}
-          />
+      {/* Anything that needs the player, from any page. */}
+      <div className={`col-span-12 flex flex-wrap items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] ${attention.length ? "border-accent/40 bg-accent-soft" : "border-win/30 bg-win/10"}`}>
+        {attention.length ? (
+          <>
+            <AlertTriangle size={15} className="shrink-0 text-accent" />
+            <span className="font-medium">Needs your attention:</span>
+            {attention.map((a) => (
+              <a key={a.text} href={`#${a.to}`} className={`rounded-full border border-accent/40 px-2.5 py-0.5 font-medium text-accent transition-colors ${SOFT_CSS} hover:bg-accent/10`}>
+                {a.text} →
+              </a>
+            ))}
+          </>
         ) : (
-          <div className="py-16 text-center text-muted">No matches in this period.</div>
+          <>
+            <CheckCircle2 size={15} className="shrink-0 text-win" />
+            <span>
+              <b className="font-medium text-win">All clear.</b> <span className="text-muted">No Riot security alerts and no active penalties.</span>
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* 2. Money: the total (switchable currency), and where it went. */}
+      <Card span={6} title="Money spent" to={page("money", DS.payments)}>
+        {where && spend[0] ? (
+          <div className="grid gap-x-6 gap-y-4 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <SpendFigure
+              v={spend[0][1]}
+              cur={spend[0][0]}
+              items={pay.data.filter((p) => p.currency_code === spend[0][0]).map((p) => ({ v: amountPaid(p), t: p._t }))}
+              sub={
+                <>
+                  {pay.data.length} payments{spend.length > 1 ? ` · + ${spend.slice(1).map(([c, v]) => money(v, c)).join(", ")}` : ""}
+                  {where.topMethod && (
+                    <div>
+                      mostly <b className="font-medium text-ink">{where.topMethod[0]}</b> ({Math.round((where.topMethod[1] / where.total) * 100)}%)
+                    </div>
+                  )}
+                </>
+              }
+            />
+            <div className="min-w-0">
+              <div className="mb-1.5 text-[11.5px] font-semibold uppercase tracking-[0.12em] text-muted" title="Estimated from which top-up's VP paid for each item (oldest VP first)">
+                Where it went ≈
+              </div>
+              <div className="mb-2.5 flex h-2.5 overflow-hidden rounded-full bg-panel-2">
+                {where.rows.map((r) => (
+                  <div key={r.k} style={{ width: `${(r.v / where.total) * 100}%`, background: WHERE_COLORS[r.k] }} title={`${r.k}: ${money(r.v, where.main)}`} />
+                ))}
+              </div>
+              <ul className="space-y-1 text-[13px]">
+                {where.rows.map((r) => (
+                  <li key={r.k} className="flex items-baseline justify-between gap-2">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-sm" style={{ background: WHERE_COLORS[r.k] }} />
+                      {r.k}
+                    </span>
+                    <span className="num text-muted">
+                      {money(r.v, where.main)} <span className="text-faint">· {Math.round((r.v / where.total) * 100)}%</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            {byYear.length > 1 && (
+              <div className="sm:col-span-2">
+                <div className="mb-1.5 text-[11.5px] font-semibold uppercase tracking-[0.12em] text-muted">By year</div>
+                <ul className="space-y-1.5">
+                  {byYear.map(([y, e]) => (
+                    <li key={y} className="grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 text-[13px]">
+                      <span className="num font-medium">{y}</span>
+                      <div className="h-2 overflow-hidden rounded-full bg-panel-2">
+                        <div className="h-full rounded-full bg-accent" style={{ width: `${(e.amt / Math.max(...byYear.map(([, x]) => x.amt))) * 100}%` }} />
+                      </div>
+                      <span className="num text-[12px] text-muted">
+                        {money(e.amt, spend[0][0])} <span className="text-faint">· {e.n}×</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="py-6 text-center text-muted">No payments in this period.</div>
         )}
       </Card>
 
-      <Card span={4} title="Recent events" hint="Payments, purchases, security & penalties" pad={false}>
-        <ul className="scroll-thin max-h-[300px] overflow-y-auto px-5 py-2">
+      {/* 3. What the account owns. */}
+      <Card span={6} title="Skins & battle passes" to={page("collection", DS.store)}>
+        <div className="grid grid-cols-3 gap-3">
+          <Tile k="Skins owned" v={coll.owned} hint={`${n0(coll.skinVP)} VP · ${coll.upgraded} upgraded`} tone="accent" onClick={toColl ? () => goTo("collection", { section: "skins", filter: "all" }) : undefined} />
+          <Tile k="Battle passes" v={coll.passes} hint={`${n0(coll.passVP)} VP`} onClick={toColl ? () => goTo("collection", { filter: "passes" }) : undefined} />
+          <Tile k="Bundles" v={coll.bundles} hint="bought whole" onClick={toColl ? () => goTo("collection", { section: "vp-purchases", filter: "category", value: "bundles" }) : undefined} />
+        </div>
+        {latestSkins.length > 0 && (
+          <>
+            <div className="mb-1.5 mt-4 text-[11.5px] font-semibold uppercase tracking-[0.12em] text-muted">Latest skins</div>
+            <ul className="divide-y divide-line">
+              {latestSkins.map((s) => (
+                <li key={s.r.transaction_id}>
+                  <button type="button" disabled={!toColl} onClick={() => goTo("collection", { filter: "skin", value: s.name })} title={`Show ${s.name}`} className="-mx-2 flex w-[calc(100%+1rem)] items-baseline justify-between gap-3 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-panel-2">
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium">{s.name}</span> <span className="text-faint">· {s.weapon}</span>
+                    </span>
+                    <span className="num shrink-0 text-[12px] text-muted">
+                      {guard(s.t, f.date(s.t))} · {n0(s.cost)} VP
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </Card>
+
+      <Card span={6} title="Gameplay" hint="Real matches only (range & tutorial excluded)" to={page("matches", DS.matches)}>
+        <div className="grid grid-cols-2 gap-3">
+          <Tile k="Matches" v={games.length} hint={`on ${n0(play.days)} different days`} />
+          <Tile k="Win rate" v={decided ? Math.round((wins / decided) * 1000) / 10 : 0} suffix="%" hint={`${n0(wins)} W · ${n0(decided - wins)} L`} />
+          <Tile k="Time played" v={Math.round(hours)} suffix=" h" hint={hours >= 24 ? `≈ ${(hours / 24).toFixed(1)} days non-stop` : "in matches"} />
+          <Tile k="Best win streak" v={play.best} hint="wins in a row" />
+        </div>
+        <div className="mt-3">
+          <KV k="Most played mode" v={favMode ? `${favMode.name} · ${n0(favMode.n)} matches${favMode.rate != null ? ` · ${favMode.rate}% W` : ""}` : "—"} />
+          <KV k="Longest match" v={play.longest ? `${Math.round(play.longest)} min` : "—"} mono />
+          <KV k="Playing since" v={play.first ? <Sens>{`${pv.secret(f.date(play.first))} · last ${guard(play.last, f.date(play.last))}`}</Sens> : "—"} mono />
+        </div>
+      </Card>
+
+      <Card span={6} title="Recent events" hint="Payments, purchases, security & penalties" pad={false}>
+        <ul className="scroll-thin max-h-[330px] overflow-y-auto px-5 py-2">
           {feed.map((e, i) => (
             <li key={i} className="border-b border-dashed border-line last:border-0">
               <a href={`#${e.to}`} title={`Open ${e.to.charAt(0).toUpperCase() + e.to.slice(1)}`} className="-mx-2 flex gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-panel-2">
@@ -152,7 +352,7 @@ export function Overview() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{e.text}</div>
                   <div className="num text-[12px] text-muted">
-                    {f.dateTime(e.t)} · {e.tag}
+                    <Sens>{e.created ? pv.secret(f.dateTime(e.t)) : guard(e.t, f.dateTime(e.t))}</Sens> · {e.tag}
                   </div>
                 </div>
               </a>
@@ -162,46 +362,74 @@ export function Overview() {
         </ul>
       </Card>
 
-      <Card span={12} title="Play calendar" hint={`Days you played, in ${f.tzLabel}`} to={page("matches", DS.matches)}>
-        <CalendarHeatmap times={games.map((g) => g._t!).filter(Boolean)} years={years} />
-      </Card>
-
-      <Card span={12} title="Collection" to={page("collection", DS.store)}>
-        <div className="grid gap-x-8 gap-y-3 lg:grid-cols-2">
-        <div className="grid grid-cols-3 content-start gap-3">
-          <Tile k="Skins owned" v={coll.owned} hint="bought or upgraded" tone="accent" />
-          <Tile k="Battle passes" v={coll.passes} hint={`${n0(coll.passVP)} VP`} />
-          <Tile k="Bundles" v={coll.bundles} hint="bought whole" />
-        </div>
-        <div className="lg:-mt-2">
-          <KV k="Skins bought with VP" v={coll.bought.toLocaleString("en")} mono />
-          <KV k="Skins upgraded with Radianite" v={`${coll.upgraded} (${coll.maxed} at level 4+)`} mono />
-          <KV k="Radianite spent" v={`${n0(coll.rp)} RP`} mono />
-          <KV k="Agents unlocked with tokens" v={String(coll.agents)} mono />
-          <KV k="Other items (Kingdom Credits…)" v={String(coll.otherItems)} mono />
-          <KV k="Penalties" v={pen.data.length.toLocaleString("en")} mono />
-        </div>
-        </div>
-      </Card>
     </Page>
   );
 }
 
-function Meta({ k, v }: { k: string; v: string }) {
+function IpRow({ k, ip, sub, onClick, strong, secret, mask }: { k: string; ip: string; sub: string; onClick: () => void; strong?: boolean; /** fully hidden in privacy mode, not just partly */ secret?: boolean; /** masks other IPs (the creation IP can also be the most used or latest one) */ mask: (ip: string) => string }) {
+  const pv = usePrivacy();
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(ip).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    });
+  };
   return (
-    <div>
-      <div className="text-[11.5px] uppercase tracking-[0.12em] text-faint">{k}</div>
-      <div className="num mt-0.5 text-[14px]">{v}</div>
+    <div className={`-mx-2 grid grid-cols-[120px_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2 py-2 transition-colors ${SOFT_CSS} hover:bg-panel-3/60`}>
+      <span className={`text-[12px] ${strong ? "font-semibold text-ink" : "text-muted"}`}>{k}</span>
+      <button type="button" onClick={onClick} title="Show this IP on the Security page" className="min-w-0 text-left">
+        <span className={`num block truncate font-medium ${strong ? "text-[16px] text-accent" : "text-[14px]"}`}>
+          <Sens>{secret ? pv.secret(ip) : mask(ip)}</Sens>
+        </span>
+        <span className="num block text-[11.5px] text-faint">
+          <Sens>{sub}</Sens>
+        </span>
+      </button>
+      <span className="flex items-center gap-1.5">
+        {!pv.hidden && (
+          <button type="button" onClick={copy} aria-label={`Copy ${ip}`} title="Copy IP address" className="rounded-md p-1 text-faint hover:bg-panel-2 hover:text-ink">
+            {copied ? <Check size={14} className="text-win" /> : <Copy size={14} />}
+          </button>
+        )}
+      </span>
     </div>
   );
 }
 
-function Tile({ k, v, hint, tone }: { k: string; v: number; hint?: string; tone?: "accent" }) {
+function Fact({ k, v, hint, small, wide }: { k: string; v: string; hint?: string; small?: boolean; /** take both columns */ wide?: boolean }) {
   return (
-    <div className="rounded-lg bg-panel-2 px-3 py-2.5">
-      <div className={`num text-[24px] font-medium leading-none ${tone === "accent" ? "text-accent" : ""}`}>{v.toLocaleString("en")}</div>
-      <div className="mt-1.5 text-[12px] font-medium">{k}</div>
-      {hint && <div className="num text-[11px] text-faint">{hint}</div>}
+    <div className={`min-w-0 ${wide ? "col-span-2" : ""}`}>
+      <div className="text-[11.5px] uppercase tracking-[0.12em] text-faint">{k}</div>
+      <div className={`num mt-1 truncate font-medium ${small ? "text-[14px]" : "text-[18px] text-ink"}`}>
+        <Sens>{v}</Sens>
+      </div>
+      {hint && (
+        <div className="text-[11.5px] text-muted">
+          <Sens>{hint}</Sens>
+        </div>
+      )}
     </div>
   );
 }
+
+function Tile({ k, v, hint, tone, suffix = "", onClick }: { k: string; v: number; hint?: string; tone?: "accent"; suffix?: string; onClick?: () => void }) {
+  const body = (
+    <>
+      <div className={`num text-[24px] font-medium leading-none ${tone === "accent" ? "text-accent" : ""}`}>
+        {v.toLocaleString("en")}
+        {suffix}
+      </div>
+      <div className="mt-1.5 text-[12px] font-medium">{k}</div>
+      {hint && <div className="num truncate text-[11px] text-faint">{hint}</div>}
+    </>
+  );
+  return onClick ? (
+    <button type="button" onClick={onClick} className="min-w-0 rounded-lg bg-panel-2 px-3 py-2.5 text-left transition-colors hover:bg-panel-3">
+      {body}
+    </button>
+  ) : (
+    <div className="min-w-0 rounded-lg bg-panel-2 px-3 py-2.5">{body}</div>
+  );
+}
+
