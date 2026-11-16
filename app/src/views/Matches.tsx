@@ -1,16 +1,21 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useCreated, useDateGuard } from "../lib/privacy-dates";
+import { usePrivacy } from "../lib/privacy";
 import { useAccount, useRecords } from "../lib/account";
 import type { Rec } from "../lib/api";
 import { useSettings } from "../lib/settings";
-import { DS, isRealMatch, matchMinutes, queueName } from "../lib/valorant";
+import { DS, isRealMatch, matchMinutes, n0, queueName, winStreaks } from "../lib/valorant";
 import { buildSessions, tilt } from "../lib/sessions";
 import { Badge, Bar, Card, Empty, Page, Stat } from "../components/ui";
-import { C, MonthlyChart, WeekHourHeatmap, monthSpan } from "../components/charts";
-import { DataTable, type Col } from "../components/DataTable";
+import { C, CalendarHeatmap, MonthlyChart, WeekHourHeatmap, monthSpan } from "../components/charts";
+import { DataTable, type Col, type Facet, type Preset } from "../components/DataTable";
+import { SOFT_CSS } from "../components/anim";
+import { scrollToSection } from "../lib/focus";
 
 export function Matches() {
-  const { has } = useAccount();
+  const { has, years } = useAccount();
   const { f } = useSettings();
+  const guard = useDateGuard();
   const mh = useRecords(DS.matches);
   const [mode, setMode] = useState<string>("all");
 
@@ -53,24 +58,14 @@ export function Matches() {
     });
   }, [sel, f]);
 
-  const streaks = useMemo(() => {
-    let bw = 0,
-      bl = 0,
-      cw = 0,
-      cl = 0;
-    for (const g of sel) {
-      if (g.game_outcome === "Win") {
-        cw++;
-        cl = 0;
-      } else if (g.game_outcome === "Loss") {
-        cl++;
-        cw = 0;
-      }
-      bw = Math.max(bw, cw);
-      bl = Math.max(bl, cl);
-    }
-    return { bw, bl };
-  }, [sel]);
+  const streaks = useMemo(() => winStreaks(sel), [sel]);
+  // The calendar shows exact days: in privacy mode it leaves out the account-creation day, which is hidden.
+  const created = useCreated();
+  const { hidden } = usePrivacy();
+  const calTimes = useMemo(() => {
+    const day = hidden && created ? f.dayKey(created) : null;
+    return sel.map((g) => g._t).filter((t): t is string => !!t && (!day || f.dayKey(t) !== day));
+  }, [sel, hidden, created, f]);
 
   const sessions = useMemo(() => buildSessions(sel), [sel]);
   const t = useMemo(() => tilt(sessions), [sessions]);
@@ -90,9 +85,34 @@ export function Matches() {
     });
   }, [sessions]);
   const longest = sessions.reduce((a, s) => (s.games.length > (a?.games.length ?? 0) ? s : a), null as (typeof sessions)[number] | null);
+  const [preset, setPreset] = useState<Preset<Rec> | null>(null);
+  // The best-streak filter holds this selection's games: drop it when the mode or period changes.
+  const streakPick = useRef(false);
+  useEffect(() => {
+    if (streakPick.current) {
+      streakPick.current = false;
+      setPreset(null);
+    }
+  }, [sel]);
+  const matchFacets = useMemo<Facet<Rec>[]>(
+    () => [
+    { id: "year", label: "Year", value: (r) => (r._t ? f.monthKey(r._t).slice(0, 4) : null), order: (a, b) => b.localeCompare(a) },
+    { id: "mode", label: "Mode", value: (r) => queueName(r) },
+    { id: "res", label: "Result", value: (r) => r.game_outcome },
+    { id: "server", label: "Server", value: (r) => String(r.realm_id ?? "").toUpperCase() || null },
+  ],
+    [f],
+  );
+  const [sortBy, setSortBy] = useState<{ id: string; desc: boolean } | null>(null);
+  const showMatches = (p: Preset<Rec> | null, sort?: { id: string; desc: boolean }) => {
+    streakPick.current = false;
+    setPreset(p);
+    setSortBy(sort ?? { id: "date", desc: true });
+    scrollToSection("matches");
+  };
   const maxMode = Math.max(1, ...modes.map(([, e]) => e.n));
   const cols: Col<Rec>[] = [
-    { id: "date", header: "Date", value: (r) => r._t, cell: (r) => <span className="num">{f.date(r._t)}</span> },
+    { id: "date", header: "Date", value: (r) => r._t, cell: (r) => <span className="num">{guard(r._t, f.date(r._t))}</span> },
     { id: "start", header: `Start (${f.tzLabel})`, value: (r) => f.time(r._t), mono: true },
     { id: "len", header: "Minutes", value: (r) => Math.round(matchMinutes(r) ?? 0), mono: true, align: "right" },
     { id: "mode", header: "Mode", value: (r) => queueName(r) },
@@ -120,15 +140,16 @@ export function Matches() {
         </select>
       }
     >
-      <Stat label="Matches" value={sel.length} sub={`${hours.toFixed(0)} hours played`} />
-      <Stat label="Win rate" value={wins + losses ? (wins / (wins + losses)) * 100 : 0} format={(v) => `${v.toFixed(1)}%`} tone="win" sub={`${wins} W · ${losses} L`} />
-      <Stat label="Avg. match length" value={mins.length ? mins.reduce((a, b) => a + b, 0) / mins.length : 0} format={(v) => `${v.toFixed(0)} min`} sub={`longest ${Math.round(Math.max(0, ...mins))} min`} />
-      <Stat label="Best win streak" value={streaks.bw} tone="accent" sub={`worst losing streak ${streaks.bl}`} />
+      <Stat label="Matches" onClick={() => showMatches(null)} action="Show every match" value={sel.length} sub={`${hours.toFixed(0)} hours played`} />
+      <Stat label="Win rate" onClick={() => showMatches({ label: "Wins", test: (r) => r.game_outcome === "Win" })} action="Show your wins" value={wins + losses ? (wins / (wins + losses)) * 100 : 0} format={(v) => `${v.toFixed(1)}%`} tone="win" sub={`${wins} W · ${losses} L`} />
+      <Stat label="Avg. match length" onClick={() => showMatches(null, { id: "len", desc: true })} action="Show matches, longest first" value={mins.length ? mins.reduce((a, b) => a + b, 0) / mins.length : 0} format={(v) => `${v.toFixed(0)} min`} sub={`longest ${Math.round(Math.max(0, ...mins))} min`} />
+      <Stat label="Best win streak" onClick={streaks.bw ? () => { showMatches({ label: `Best win streak (${streaks.bw})`, test: (r) => streaks.best.has(r) }, { id: "date", desc: false }); streakPick.current = true; } : undefined} action="Show the games of your best win streak" value={streaks.bw} tone="accent" sub={`worst losing streak ${streaks.bl}`} />
 
-      <Card span={8} title="Results per month" hint="Bars = matches · line = win rate (months with 5+ decided games)">
+      <Card span={8} title="Results per month" hint="Bars = matches · line = win rate (months with 5+ decided games) · click a month to see its matches">
         {monthly.length ? (
           <MonthlyChart
-            height={280}
+            onPick={(m) => showMatches({ label: f.monthLabel(m), test: (r) => !!r._t && f.monthKey(r._t) === m })}
+            height={320}
             data={monthly}
             series={[
               { key: "win", label: "Wins", color: C.win, stack: true },
@@ -141,23 +162,7 @@ export function Matches() {
           <Empty title="No matches in this period" />
         )}
       </Card>
-      <Card span={4} title="Modes" hint="Click a mode to filter">
-        <div className="space-y-2.5">
-          {modes.map(([k, e]) => (
-            <button key={k} onClick={() => setMode(mode === k ? "all" : k)} className={`block w-full rounded-lg px-2 py-1.5 text-left hover:bg-panel-2 ${mode === k ? "bg-panel-2 ring-1 ring-line-strong" : ""}`}>
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="truncate font-medium">{k}</span>
-                <span className="num shrink-0 text-[12.5px] text-muted">
-                  {e.n} · {e.w + e.l ? Math.round((e.w / (e.w + e.l)) * 100) + "% W" : "—"}
-                </span>
-              </div>
-              <div className="mt-1">
-                <Bar value={e.n} max={maxMode} />
-              </div>
-            </button>
-          ))}
-        </div>
-      </Card>
+      <ModesCard modes={modes} mode={mode} setMode={setMode} maxMode={maxMode} />
 
       <Card span={6} title="Play sessions" hint="A new session starts after a 30-minute break">
         <div className="grid grid-cols-3 gap-3">
@@ -204,8 +209,12 @@ export function Matches() {
         <WeekHourHeatmap times={sel.map((g) => g._t!).filter(Boolean)} />
       </Card>
 
-      <Card span={12} title="All matches" pad={false}>
-        <DataTable rows={sel} cols={cols} initialSort={{ id: "date", desc: true }} filename="matches" />
+      <Card span={12} title="Play calendar" hint={`Days you played, in ${f.tzLabel}`}>
+        <CalendarHeatmap times={calTimes} years={years} />
+      </Card>
+
+      <Card id="matches" span={12} title="All matches" pad={false}>
+        <DataTable rows={sel} cols={cols} preset={preset} onClearPreset={() => setPreset(null)} sortBy={sortBy} facets={matchFacets} initialSort={{ id: "date", desc: true }} filename="matches" />
       </Card>
     </Page>
   );
@@ -227,5 +236,48 @@ function TiltBox({ label, x, tone }: { label: string; x: { rate: number | null; 
       <div className="text-[12px] text-muted">{label}</div>
       <div className="num text-[11px] text-faint">{x.n} games</div>
     </div>
+  );
+}
+
+/**
+ * Modes, as a list that scrolls inside the card. The card takes the chart's height (the list never sets the
+ * row's height), so nothing resizes and the chart never stretches. Soft fades at the edges show there's more.
+ */
+function ModesCard({ modes, mode, setMode, maxMode }: { modes: [string, { n: number; w: number; l: number }][]; mode: string; setMode: (m: string) => void; maxMode: number }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [edge, setEdge] = useState({ top: false, bottom: false });
+  const measure = () => {
+    const el = box.current;
+    if (!el) return;
+    setEdge({ top: el.scrollTop > 2, bottom: el.scrollTop + el.clientHeight < el.scrollHeight - 2 });
+  };
+  useEffect(() => {
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (box.current) ro.observe(box.current);
+    return () => ro.disconnect();
+  }, [modes.length]);
+  const mask = `linear-gradient(to bottom, ${edge.top ? "transparent" : "#000"} 0, #000 28px, #000 calc(100% - 28px), ${edge.bottom ? "transparent" : "#000"} 100%)`;
+  return (
+    <Card fill span={4} title="Modes" hint={`${modes.length} modes · click one to filter the page`}>
+      <div className="relative h-full min-h-[300px]">
+        <div ref={box} onScroll={measure} className="scroll-thin absolute inset-0 space-y-0.5 overflow-y-auto pr-1" style={{ maskImage: mask, WebkitMaskImage: mask }}>
+          {modes.map(([k, e]) => (
+            <button
+              key={k}
+              onClick={() => setMode(mode === k ? "all" : k)}
+              aria-pressed={mode === k}
+              className={`grid w-full grid-cols-[minmax(0,1fr)_70px_auto] items-center gap-3 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors ${SOFT_CSS} hover:bg-panel-2 ${mode === k ? "bg-panel-2 ring-1 ring-line-strong" : ""}`}
+            >
+              <span className="truncate font-medium">{k}</span>
+              <Bar value={e.n} max={maxMode} />
+              <span className="num w-[86px] text-right text-[12px] text-muted">
+                {n0(e.n)} · {e.w + e.l ? Math.round((e.w / (e.w + e.l)) * 100) + "% W" : "—"}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </Card>
   );
 }

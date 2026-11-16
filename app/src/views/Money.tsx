@@ -1,17 +1,19 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { useDateGuard, useMaskIp } from "../lib/privacy-dates";
+import { Sens, usePrivacy } from "../lib/privacy";
 import { useAccount, useRecords } from "../lib/account";
-import { useAnnotations } from "../lib/annotations";
 import type { Rec } from "../lib/api";
-import { ConvertedChips, PaidIn, useMoney } from "../lib/convert";
+import { PaidIn, SpendStat, useMoney } from "../lib/convert";
 import { allocateVP, type Allocation } from "../lib/fifo";
 import { localParts, useSettings } from "../lib/settings";
-import { DS, amountPaid, classifyAllVP, isVP, money, n0, payMethod } from "../lib/valorant";
-import { Badge, Card, Empty, KV, Page, Stat } from "../components/ui";
+import { DS, amountPaid, classifyAllVP, isVP, money, n0, payMethod, VP_GROUPS, vpGroupOf } from "../lib/valorant";
+import { Card, Empty, KV, Page, Stat } from "../components/ui";
 import { C, Donut, MonthlyChart, monthSpan } from "../components/charts";
-import { DataTable, type Col } from "../components/DataTable";
+import { DataTable, type Col, type Facet, type Preset } from "../components/DataTable";
+import { goTo, scrollToSection } from "../lib/focus";
 
 /** IP of the login event closest to `t` (within 6 h). `logins` must be sorted by time. */
-export function nearestIp(logins: Rec[], t: string): string | null {
+function nearestIp(logins: Rec[], t: string): string | null {
   const ts = Date.parse(t);
   let lo = 0,
     hi = logins.length - 1;
@@ -35,7 +37,7 @@ export function nearestIp(logins: Rec[], t: string): string | null {
 }
 
 export function Money() {
-  const { has } = useAccount();
+  const { has, setRange } = useAccount();
   const { f, settings } = useSettings();
   const m$ = useMoney();
   const pay = useRecords(DS.payments);
@@ -43,7 +45,9 @@ export function Money() {
   const store = useRecords(DS.store);
   const storeAll = useRecords(DS.store, false);
   const logins = useRecords(DS.logins, false);
-  const tags = useAnnotations("ip");
+  const pv = usePrivacy();
+  const maskIp = useMaskIp();
+  const guard = useDateGuard();
 
   const cur = useMemo(() => {
     const by = new Map<string, number>();
@@ -108,7 +112,7 @@ export function Money() {
   const PLANS_SHOWN = 4;
 
   const vpWhere = useMemo(() => {
-    const label = (c: string) => (c === "Skin" ? "Skins" : c === "Battle Pass" ? "Battle passes" : c === "Bundle" ? "Bundles" : "Unknown items");
+    const label = (c: string) => vpGroupOf(c).label;
     const m = new Map<string, number>();
     for (const x of vpItems) m.set(label(x.category), (m.get(label(x.category)) ?? 0) + x.cost);
     return [...m.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
@@ -132,7 +136,7 @@ export function Money() {
   }, [pay.data, payAll.all, logins.all, main, fifo]);
 
   const cols: Col<(typeof rows)[number]>[] = [
-    { id: "date", header: "Date", value: (r) => r.p._t, cell: (r) => <span className="num">{f.date(r.p._t)}</span> },
+    { id: "date", header: "Date", value: (r) => r.p._t, cell: (r) => <span className="num">{guard(r.p._t, f.date(r.p._t))}</span> },
     { id: "time", header: `Time (${f.tzLabel})`, value: (r) => f.time(r.p._t, true), mono: true },
     {
       id: "amt",
@@ -154,17 +158,15 @@ export function Money() {
       cell: (r) => (r.allocs.length ? <span className="text-[12.5px]">{new Set(r.allocs.map((a) => a.item)).size} items</span> : <span className="text-faint">—</span>),
     },
     { id: "method", header: "Method", value: (r) => payMethod(r.p.payment_method) },
-    { id: "id", header: "Purchase ID", value: (r) => r.p.player_facing_purchase_id, mono: true },
+    { id: "id", header: "Purchase ID", secret: true, value: (r) => r.p.player_facing_purchase_id, cell: (r) => <Sens className="num">{pv.id(r.p.player_facing_purchase_id)}</Sens> },
     {
       id: "ip",
       header: "Login IP nearby",
+      secret: true,
       value: (r) => r.ip ?? "",
       cell: (r) =>
         r.ip ? (
-          <span className="flex items-center gap-1.5">
-            <span className="num text-[12.5px]">{r.ip.length > 22 ? r.ip.slice(0, 20) + "…" : r.ip}</span>
-            {tags.map[r.ip] === "mine" ? <Badge tone="win">mine</Badge> : tags.map[r.ip] === "not-mine" ? <Badge tone="accent">not mine</Badge> : <Badge>untagged</Badge>}
-          </span>
+          <Sens className="num text-[12.5px]">{((ip) => (ip.length > 22 ? ip.slice(0, 20) + "…" : ip))(maskIp(r.ip))}</Sens>
         ) : (
           <span className="text-faint">—</span>
         ),
@@ -172,20 +174,43 @@ export function Money() {
     { id: "run", header: "Running total", value: (r) => r.run, cell: (r) => <span className="num text-muted">{money(r.run, main, 0)}</span>, align: "right" },
   ];
 
+  type Row = (typeof rows)[number];
+  const [payPreset, setPayPreset] = useState<Preset<Row> | null>(null);
+  const showPayments = (p: Preset<Row> | null) => {
+    setPayPreset(p);
+    scrollToSection("payments");
+  };
+  const planPreset = (x: (typeof plans)[number]): Preset<Row> => ({ label: `${money(x.amt, x.cur)} top-ups`, test: (r) => r.p.currency_code === x.cur && Math.round(amountPaid(r.p) * 100) / 100 === x.amt });
+  const payFacets = useMemo<Facet<Row>[]>(
+    () => [
+    { id: "year", label: "Year", value: (r) => (r.p._t ? f.monthKey(r.p._t).slice(0, 4) : null), order: (a, b) => b.localeCompare(a) },
+    { id: "plan", label: "Top-up", value: (r) => ((a) => money(a, r.p.currency_code, Number.isInteger(a) ? 0 : 2))(Math.round(amountPaid(r.p) * 100) / 100), order: (a, b) => parseFloat(b.replace(/[^\d.]/g, "")) - parseFloat(a.replace(/[^\d.]/g, "")) },
+    { id: "method", label: "Method", value: (r) => payMethod(r.p.payment_method) },
+    { id: "cur", label: "Currency", value: (r) => r.p.currency_code },
+    { id: "country", label: "Country", value: (r) => r.p.country_code },
+    { id: "spent", label: "VP", value: (r) => (r.allocs.length ? "Spent on items" : "Not spent yet") },
+    { id: "gift", label: "Gift", value: (r) => (r.p.recipient_id ? "Gift sent" : "For me") },
+  ],
+    [f],
+  );
+
   if (!has(DS.payments)) return <Page code="01 / Money" title="Money"><Card><Empty title="No payment data">This export has no VALORANT payment records.</Empty></Card></Page>;
 
   return (
     <Page code="01 / Money" title="Real money & VP" loading={pay.loading || payAll.loading || store.loading || storeAll.loading} sub={`Amounts in the currency Riot charged${m$.targets.length ? ` (≈ ${m$.targets.join(", ")} using your rates)` : ""} · times in ${f.tzLabel}`}>
-      <Stat
+      <SpendStat
         label="Total paid"
-        value={total}
-        format={(v) => money(v, main)}
-        tone="accent"
-        extra={<ConvertedChips v={total} cur={main} items={pay.data.filter((p) => p.currency_code === main).map((p) => ({ v: amountPaid(p), t: p._t }))} />}
+        v={total}
+        cur={main}
+        items={pay.data.filter((p) => p.currency_code === main).map((p) => ({ v: amountPaid(p), t: p._t }))}
+        onClick={() => showPayments(null)}
+        action="Show every payment"
         sub={cur.length > 1 ? `+ ${cur.slice(1).map(([c, v]) => money(v, c)).join(", ")}` : `across ${pay.data.length} payments`}
       />
       <Stat
         label="Most bought top-up"
+        onClick={plans[0] ? () => showPayments(planPreset(plans[0])) : undefined}
+        action={plans[0] ? `Show your ${money(plans[0].amt, plans[0].cur)} top-ups` : undefined}
         value={plans[0]?.amt ?? 0}
         format={(v) => (plans[0] ? money(v, plans[0].cur) : "—")}
         extra={
@@ -197,11 +222,13 @@ export function Money() {
               {plans.length > 1 && (
                 <ul className="mt-2 space-y-0.5 border-t border-line pt-2">
                   {plans.slice(1, PLANS_SHOWN).map((x) => (
-                    <li key={`${x.cur} ${x.amt}`} className="flex items-baseline justify-between gap-3">
-                      <span className="num">
-                        {money(x.amt, x.cur)} <span className="text-faint">· {n0(x.vp)} VP</span>
-                      </span>
-                      <span className="num text-muted">{x.n}×</span>
+                    <li key={`${x.cur} ${x.amt}`}>
+                      <button type="button" onClick={() => showPayments(planPreset(x))} title={`Show your ${money(x.amt, x.cur)} top-ups`} className="flex items-baseline justify-between gap-3 -mx-1.5 w-[calc(100%+0.75rem)] rounded-md px-1.5 text-left transition-colors hover:bg-panel-2">
+                        <span className="num">
+                          {money(x.amt, x.cur)} <span className="text-faint">· {n0(x.vp)} VP</span>
+                        </span>
+                        <span className="num text-muted">{x.n}×</span>
+                      </button>
                     </li>
                   ))}
                   {plans.length > PLANS_SHOWN && <li className="text-faint">+ {plans.length - PLANS_SHOWN} more plans</li>}
@@ -212,29 +239,29 @@ export function Money() {
         }
         sub={plans[0] ? undefined : "no top-ups in this period"}
       />
-      <Stat label="VP bought" value={vpBought} sub={`${total ? (vpBought / total).toFixed(2) : "—"} VP per ${main}`} />
-      <Stat label="VP spent" value={vpSpent} tone={vpBought - vpSpent < 0 ? "default" : "win"} sub={`difference ${n0(vpBought - vpSpent)} VP (free VP not included)`} />
+      <Stat label="VP bought" onClick={() => scrollToSection("vp-balance")} action="Show VP balance over time" value={vpBought} sub={`${total ? (vpBought / total).toFixed(2) : "—"} VP per ${main}`} />
+      <Stat label="VP spent" onClick={() => goTo("collection", { section: "vp-purchases" })} action="Show every VP purchase (Skins page)" value={vpSpent} tone={vpBought - vpSpent < 0 ? "default" : "win"} sub={vpBought >= vpSpent ? `≈ ${n0(vpBought - vpSpent)} VP left over (bought − spent)` : `${n0(vpSpent - vpBought)} VP more than you bought (free VP)`} />
 
-      <Card span={6} title="Where your VP went">
-        <Donut data={vpWhere} format={(v) => `${n0(v)} VP`} center={<><div className="num text-xl font-medium">{n0(vpSpent)}</div><div className="text-[11px] uppercase tracking-widest text-muted">VP spent</div></>} />
+      <Card span={6} title="Where your VP went" hint="Click a slice to see those purchases">
+        <Donut data={vpWhere} onPick={(l) => goTo("collection", { section: "vp-purchases", filter: "category", value: VP_GROUPS.find((g) => g.label === l)?.key })} format={(v) => `${n0(v)} VP`} center={<><div className="num text-xl font-medium">{n0(vpSpent)}</div><div className="text-[11px] uppercase tracking-widest text-muted">VP spent</div></>} />
       </Card>
-      <Card span={6} title="Payment methods">
-        <Donut data={methods} format={(v) => money(v, main)} center={<><div className="num text-xl font-medium">{money(methods.reduce((a, m) => a + m.value, 0), main)}</div><div className="text-[11px] uppercase tracking-widest text-muted">Paid</div></>} />
+      <Card span={6} title="Payment methods" hint="Click a method to see its payments">
+        <Donut data={methods} onPick={(l) => showPayments({ label: l, test: (r) => payMethod(r.p.payment_method) === l })} format={(v) => money(v, main)} center={<><div className="num text-xl font-medium">{money(methods.reduce((a, m) => a + m.value, 0), main)}</div><div className="text-[11px] uppercase tracking-widest text-muted">Paid</div></>} />
         <div className="mt-4">
           <KV k="Country on payments" v={[...new Set(pay.data.map((p) => p.country_code))].join(", ") || "—"} />
           <KV k="Gifts sent" v={String(pay.data.filter((p) => p.recipient_id).length)} mono />
         </div>
       </Card>
 
-      <Card span={8} title="Spending per month" hint={`${main} paid each month`}>
-        {monthly.length ? <MonthlyChart data={monthly} series={[{ key: "spend", label: "Paid", color: C.accent }]} yFormat={(v) => money(v, main)} /> : <Empty title="No payments in this period" />}
+      <Card span={8} title="Spending per month" hint={`${main} paid each month · click a month to see its payments`}>
+        {monthly.length ? <MonthlyChart onPick={(m) => showPayments({ label: f.monthLabel(m), test: (r) => !!r.p._t && f.monthKey(r.p._t) === m })} data={monthly} series={[{ key: "spend", label: "Paid", color: C.accent }]} yFormat={(v) => money(v, main)} /> : <Empty title="No payments in this period" />}
       </Card>
-      <Card span={4} title="By year">
-        <div className="space-y-3">
+      <Card span={4} title="By year" hint="Click a year to show only that year">
+        <div className="space-y-1">
           {yearly
             .filter(([, e]) => e.n)
             .map(([y, e]) => (
-              <div key={y}>
+              <button type="button" key={y} onClick={() => setRange({ kind: "year", y })} title={`Show only ${y}`} className="block w-[calc(100%+1rem)] py-1 -mx-2 rounded-md px-2 text-left transition-colors hover:bg-panel-2">
                 <div className="flex items-baseline justify-between">
                   <span className="num font-medium">{y}</span>
                   <span className="num">{money(e.amt, main)}</span>
@@ -245,12 +272,13 @@ export function Money() {
                 <div className="num mt-0.5 text-[12px] text-muted">
                   {e.n} payments · {n0(e.vp)} VP{m$.homeOnly(e.amt, main) ? ` · ${m$.homeOnly(e.amt, main)}` : ""}
                 </div>
-              </div>
+              </button>
             ))}
         </div>
       </Card>
 
       <Card
+        id="vp-balance"
         span={12}
         title="VP balance over time"
         hint={
@@ -278,8 +306,8 @@ export function Money() {
         </div>
       </Card>
 
-      <Card span={12} title="Every payment" hint="Click a payment to see what its VP was spent on (oldest VP is used first — an estimate, Riot doesn't record this link)" pad={false}>
-        <DataTable rows={rows} cols={cols} initialSort={{ id: "date", desc: true }} filename="payments" rowTone={(r) => (r.ip && tags.map[r.ip] === "not-mine" ? "accent" : undefined)} expand={(r) => <SpentOn allocs={r.allocs} />} />
+      <Card id="payments" span={12} title="Every payment" hint="Click a payment to see what its VP was spent on (oldest VP is used first — an estimate, Riot doesn't record this link)" pad={false}>
+        <DataTable rows={rows} cols={cols} preset={payPreset} onClearPreset={() => setPayPreset(null)} facets={payFacets} initialSort={{ id: "date", desc: true }} filename="payments" expand={(r) => <SpentOn allocs={r.allocs} />} />
       </Card>
     </Page>
   );
