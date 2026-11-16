@@ -1,8 +1,9 @@
 import { motion } from "motion/react";
-import { ArrowUp, Heart, Database, FileStack, HardDrive, LifeBuoy, Lock, RefreshCw, Settings, Upload } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Heart, Database, FileStack, HardDrive, LifeBuoy, Lock, RefreshCw, Settings, Upload } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAccount } from "../lib/account";
 import { useSettings } from "../lib/settings";
+import { homeUrl } from "../lib/home";
 import { THEMES } from "../lib/themes";
 import { EASE_EMPH } from "../lib/motion";
 import { useOffline } from "../lib/pwa";
@@ -44,6 +45,9 @@ export function Footer({ go, empty }: { go: (v: string) => void; empty: boolean 
               <Lock size={13} /> Stays on this device · nothing is uploaded{offline === "ready" && " · works offline"}
             </div>
             <p className="text-[12px] text-faint">Fan-made and unofficial. Not affiliated with Riot Games.</p>
+            <a href={homeUrl(settings)} className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-accent">
+              {APP_NAME} home page <ArrowUpRight size={13} />
+            </a>
           </div>
 
           {/* where this comes from */}

@@ -1,4 +1,5 @@
 import { animate, motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
+import { ArrowUpRight } from "lucide-react";
 import { Children, useEffect, useRef, type PointerEvent, type ReactNode } from "react";
 import { useSettings } from "../lib/settings";
 import { EASE_EMPH, StaggerIndex, lastShown, revealVariants, spotlight, useReveal } from "../lib/motion";
@@ -111,26 +112,30 @@ export function Card({
   className = "",
   pad = true,
   accent = false,
+  to,
 }: {
   span?: number;
   title?: ReactNode;
   hint?: ReactNode;
   right?: ReactNode;
+  /** A page (hash route) this card has more of: adds an "Open →" link to the header. */
+  to?: string;
   children: ReactNode;
   className?: string;
   pad?: boolean;
   accent?: boolean;
 }) {
   const reveal = useReveal();
+  const side = right ?? (to ? <OpenLink to={to} /> : null);
   return (
     <motion.section {...reveal} onPointerMove={spotlight} className={`panel spot ${accent ? "corner" : ""} ${SPAN[span] ?? SPAN[12]} min-w-0 ${className}`}>
-      {(title || right) && (
+      {(title || side) && (
         <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-3.5">
           <div className="min-w-0">
             <h2 className="font-display text-[15px] font-semibold uppercase tracking-[0.06em]">{title}</h2>
             {hint && <p className="mt-0.5 text-[12.5px] text-muted">{hint}</p>}
           </div>
-          {right}
+          {side}
         </div>
       )}
       <div className={pad ? "p-5" : ""}>{children}</div>
@@ -164,8 +169,11 @@ export function Stat({
   extra,
   tone = "default",
   span = 3,
+  to,
 }: {
   label: string;
+  /** A page (hash route) the whole card opens. */
+  to?: string;
   value: number | string;
   format?: (v: number) => string;
   sub?: ReactNode;
@@ -178,21 +186,44 @@ export function Stat({
   const reveal = useReveal();
   const tilt = useTilt();
   const attention = tone === "warn" && typeof value === "number" && value > 0;
+  // A card that opens a page is a real link: keyboard, middle-click and "open in new tab" all work.
+  const Box = (to ? motion.a : motion.div) as typeof motion.a;
   return (
-    <motion.div
+    <Box
       {...reveal}
       {...tilt.bind}
       style={tilt.style}
       whileHover={{ y: -3 }}
-      className={`panel spot ${attention ? "breathe" : ""} ${SPAN[span] ?? SPAN[3]} min-w-0 px-5 py-4 hover:shadow-[var(--shadow-2)]`}
+      href={to ? `#${to}` : undefined}
+      title={to ? `Open ${pageName(to)}` : undefined}
+      className={`panel spot group/stat relative ${attention ? "breathe" : ""} ${SPAN[span] ?? SPAN[3]} block min-w-0 px-5 py-4 hover:shadow-[var(--shadow-2)] ${to ? "cursor-pointer" : ""}`}
     >
-      <div className="text-[12px] font-medium uppercase tracking-[0.12em] text-muted">{label}</div>
+      {to && (
+        <ArrowUpRight
+          size={16}
+          aria-hidden
+          className="absolute right-4 top-4 text-faint opacity-0 transition-[opacity,transform] duration-200 group-hover/stat:translate-x-0.5 group-hover/stat:-translate-y-0.5 group-hover/stat:text-accent group-hover/stat:opacity-100 group-focus-visible/stat:opacity-100"
+        />
+      )}
+      <div className="pr-6 text-[12px] font-medium uppercase tracking-[0.12em] text-muted">{label}</div>
       <div className={`num mt-1.5 truncate text-[28px] font-medium leading-none ${color}`}>
         {typeof value === "number" ? <CountUp value={value} format={format} id={`stat:${label}`} /> : value}
       </div>
       {extra && <div className="mt-2.5">{extra}</div>}
       {sub && <div className="mt-2 truncate text-[12.5px] text-muted">{sub}</div>}
-    </motion.div>
+    </Box>
+  );
+}
+
+/** "matches" → "Matches", "import" → "Import" (for link titles). */
+const pageName = (to: string) => to.charAt(0).toUpperCase() + to.slice(1);
+
+/** The "Open →" link in a card header that leads to the page with more on the topic. */
+export function OpenLink({ to, label = "Open" }: { to: string; label?: string }) {
+  return (
+    <a href={`#${to}`} title={`Open ${pageName(to)}`} className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[12.5px] text-accent hover:underline">
+      {label} <ArrowUpRight size={13} />
+    </a>
   );
 }
 

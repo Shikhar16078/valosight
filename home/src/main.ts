@@ -1,7 +1,8 @@
-import "./home.css";
 import {
   ArrowRight,
+  ArrowUpRight,
   BadgeCheck,
+  Bug,
   Check,
   CircleCheck,
   CloudOff,
@@ -15,6 +16,7 @@ import {
   Lightbulb,
   Lock,
   LockKeyhole,
+  MessageCircle,
   OctagonAlert,
   Palette,
   ShieldAlert,
@@ -34,8 +36,8 @@ root.classList.add("js");
 
 createIcons({
   icons: {
-    ArrowRight, BadgeCheck, Check, CircleCheck, CloudOff, EyeOff, FlaskConical, Code, HardDrive, Info, LifeBuoy, Lightbulb, Lock,
-    LockKeyhole, OctagonAlert, Palette, ShieldAlert, ShieldCheck, Sparkles, Swords, TriangleAlert, User, Wallet, WifiOff,
+    ArrowRight, ArrowUpRight, BadgeCheck, Bug, Check, CircleCheck, CloudOff, EyeOff, FlaskConical, Code, HardDrive, Info, LifeBuoy, Lightbulb, Lock,
+    LockKeyhole, MessageCircle, OctagonAlert, Palette, ShieldAlert, ShieldCheck, Sparkles, Swords, TriangleAlert, User, Wallet, WifiOff,
   },
 });
 
@@ -43,13 +45,32 @@ const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)")
 
 /* ------------------------------------------------------------------ themes */
 const KEY = "valosight.home.theme";
-const saved = (() => {
+let saved = (() => {
   try {
     return localStorage.getItem(KEY);
   } catch {
     return null;
   }
 })();
+
+// The app's "Home" button hands over its theme as ?theme=<id>. Like the app, use it only if this visitor
+// never picked a theme here, remember it, and take it out of the address so it isn't bookmarked or shared.
+{
+  const url = new URL(location.href);
+  const handed = url.searchParams.get("theme");
+  if (handed !== null) {
+    url.searchParams.delete("theme");
+    history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+    if (!saved && THEMES.some((t) => t.id === handed)) {
+      saved = handed;
+      try {
+        localStorage.setItem(KEY, handed);
+      } catch {
+        /* private mode: used for this visit only */
+      }
+    }
+  }
+}
 
 /**
  * Theme hand-off: once a visitor picks a theme here, every link into the app carries it as `?theme=<id>`.
@@ -155,6 +176,41 @@ const spy = new IntersectionObserver(
 for (const a of links) {
   const s = document.querySelector(a.hash);
   if (s) spy.observe(s);
+}
+
+/* --------------------------------------------------------------------- faq */
+// <details> opens and closes instantly; this animates the height instead (the content fades in as it opens).
+// It stays a real <details>: keyboard, screen readers and find-in-page work as before, and a click in the
+// middle of an animation reverses it smoothly from wherever it is.
+const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+for (const d of document.querySelectorAll<HTMLDetailsElement>(".faq details")) {
+  const summary = d.querySelector("summary")!;
+  let anim: Animation | null = null;
+  summary.addEventListener("click", (e) => {
+    if (reduceMotion()) return; // plain instant toggle
+    e.preventDefault();
+    const from = d.offsetHeight;
+    anim?.cancel();
+    const closing = d.open && !d.classList.contains("closing");
+    d.style.overflow = "hidden";
+    let to: number;
+    if (closing) {
+      d.classList.add("closing"); // turns the "+" back right away, while [open] stays until the end
+      to = summary.offsetHeight + (d.offsetHeight - d.clientHeight); // the summary plus the borders
+    } else {
+      d.classList.remove("closing");
+      d.open = true;
+      to = d.offsetHeight;
+      d.querySelector("p")?.animate({ opacity: [0, 1], transform: ["translateY(-6px)", "none"] }, { duration: 320, easing: EASE });
+    }
+    anim = d.animate({ height: [`${from}px`, `${to}px`] }, { duration: closing ? 260 : 340, easing: EASE });
+    anim.onfinish = () => {
+      if (closing) d.open = false;
+      d.classList.remove("closing");
+      d.style.overflow = "";
+      anim = null;
+    };
+  });
 }
 
 /* ----------------------------------------------------------------- gallery */
